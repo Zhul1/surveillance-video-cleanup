@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>NAS Video Cleanup</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">NAS Video Cleanup</p>
+          <h1>监控视频整理台</h1>
+        </div>
+        <div class="topbar-actions">
+          <span class="status-dot" id="healthDot"></span>
+          <span id="healthText">本地服务检测中</span>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <section class="control-band">
+          <div class="field-group folder-field">
+            <label for="folderInput">视频目录</label>
+            <input id="folderInput" type="text" placeholder="/Volumes/NAS/监控视频/卧室" />
+          </div>
+          <div class="field-group threshold-field">
+            <label for="thresholdInput">候选阈值</label>
+            <div class="compact-input">
+              <input id="thresholdInput" type="number" min="0.1" step="0.1" value="1.0" />
+              <span>MB</span>
+            </div>
+          </div>
+          <div class="action-strip">
+            <button id="analyzeBtn" class="primary">分析目录</button>
+            <button id="organizeBtn">按年月日整理</button>
+          </div>
+        </section>
+
+        <section class="stats-band" id="statsBand">
+          <div class="metric">
+            <span class="metric-label">视频总数</span>
+            <strong id="metricVideos">-</strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">候选删除</span>
+            <strong id="metricCandidates">-</strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">待整理文件</span>
+            <strong id="metricOrganize">-</strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label">候选体积</span>
+            <strong id="metricCandidateSize">-</strong>
+          </div>
+        </section>
+
+        <section class="content-band">
+          <div class="panel panel-wide">
+            <div class="panel-head">
+              <div>
+                <h2>候选视频</h2>
+                <p>小于阈值的视频会先列在这里，由你决定后续处理。</p>
+              </div>
+              <div class="panel-actions">
+                <label class="choice">
+                  <input id="selectAll" type="checkbox" />
+                  <span>全选当前列表</span>
+                </label>
+                <select id="deleteMode">
+                  <option value="recycle">移动到回收目录</option>
+                  <option value="delete">永久删除</option>
+                </select>
+                <button id="deleteBtn" class="danger">处理选中项</button>
+              </div>
+            </div>
+
+            <div class="table-shell">
+              <table>
+                <thead>
+                  <tr>
+                    <th class="checkbox-col"></th>
+                    <th>文件</th>
+                    <th>大小</th>
+                    <th>推断日期</th>
+                    <th>建议归档目录</th>
+                  </tr>
+                </thead>
+                <tbody id="candidateTable">
+                  <tr class="empty-row">
+                    <td colspan="5">还没有分析结果</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <aside class="panel side-panel">
+            <div class="panel-head">
+              <div>
+                <h2>操作记录</h2>
+                <p>每次整理、分析、删除都会留下简要回执。</p>
+              </div>
+            </div>
+            <div class="log-list" id="logList">
+              <div class="log-item muted">等待操作</div>
+            </div>
+          </aside>
+        </section>
+      </main>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+  </html>
