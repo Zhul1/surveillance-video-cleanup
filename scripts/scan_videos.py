@@ -9,8 +9,8 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
-import cv2
-import numpy as np
+cv2 = None
+np = None
 
 
 @dataclass
@@ -37,6 +37,8 @@ def remote_to_local(remote_path: str, remote_prefix: str, local_prefix: str) -> 
 
 
 def remote_to_trash(remote_path: str, source_root: str, trash_prefix: str) -> str:
+    if not remote_path.startswith(source_root.rstrip("/") + "/"):
+        raise ValueError(f"unexpected source path: {remote_path}")
     rel = remote_path[len(source_root.rstrip("/") + "/") :]
     return trash_prefix.rstrip("/") + "/" + rel
 
@@ -47,6 +49,7 @@ def remote_to_local_trash(remote_path: str, source_root: str, local_prefix: str,
 
 
 def load_cascades():
+    ensure_video_deps()
     base = cv2.data.haarcascades
     names = [
         "haarcascade_frontalface_default.xml",
@@ -55,6 +58,19 @@ def load_cascades():
         "haarcascade_fullbody.xml",
     ]
     return [(name, cv2.CascadeClassifier(base + name)) for name in names]
+
+
+def ensure_video_deps():
+    global cv2, np
+    if cv2 is not None and np is not None:
+        return
+    try:
+        import cv2 as cv2_module
+        import numpy as np_module
+    except ImportError as exc:
+        raise RuntimeError("OpenCV and NumPy are required for video scanning, but not for --move-empty") from exc
+    cv2 = cv2_module
+    np = np_module
 
 
 def resize_width(frame, width):
@@ -145,6 +161,7 @@ def vision_confirm(frames, token, vision_detector, max_frames=6):
 
 
 def sample_frames(path, sample_count):
+    ensure_video_deps()
     cap = cv2.VideoCapture(path)
     if not cap.isOpened():
         raise RuntimeError("cannot open video")
@@ -176,6 +193,7 @@ def scan_one(remote_path, args_dict):
     t0 = time.time()
     local_path = remote_to_local(remote_path, args_dict["remote_prefix"], args_dict["local_prefix"])
     try:
+        ensure_video_deps()
         size_bytes = os.path.getsize(local_path)
         frames, duration = sample_frames(local_path, args_dict["samples"])
         if not frames:

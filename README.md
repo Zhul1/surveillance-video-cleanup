@@ -130,6 +130,8 @@ SOURCE_BASE="/volume3/TV_Shows/监控视频/卧室" ./scripts/sort_into_months.s
 - NumPy
 - macOS（如果要使用 `vision/person_detect.swift`）
 
+说明：只执行 `--move-empty` 移动已有扫描结果时，不需要 OpenCV。
+
 编译 Apple Vision 辅助检测器：
 
 ```bash
@@ -221,6 +223,20 @@ python3 scripts/scan_videos.py \
 - 本地下载的 wheel 包
 
 `.gitignore` 已经把这类文件排除了。
+
+## 测试
+
+运行内置回归测试：
+
+```bash
+python3 -m unittest discover -s tests
+```
+
+测试覆盖：
+
+- 按大小移动时包含刚好等于阈值的文件
+- UI 后端按年月日归档和回收目录移动
+- 视觉扫描结果移动时的远程路径安全校验
 
 ## 后续可扩展
 

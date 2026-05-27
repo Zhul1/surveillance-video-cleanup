@@ -11,7 +11,16 @@ echo "BEGIN	$LABEL	$SOURCE_BASE	$TRASH_BASE	$SIZE_THRESHOLD_BYTES"
 count=0
 
 find "$SOURCE_BASE" \( -path "*/@eaDir/*" -o -path "*/#recycle/*" \) -prune -o \
-  -type f -iname "*.mp4" -size -"${SIZE_THRESHOLD_BYTES}"c -printf "%s\t%p\n" |
+  -type f -iname "*.mp4" -exec sh -c '
+    threshold=$1
+    shift
+    for src do
+      size=$(wc -c < "$src" 2>/dev/null | tr -d " ")
+      [ -n "$size" ] || continue
+      [ "$size" -le "$threshold" ] || continue
+      printf "%s\t%s\n" "$size" "$src"
+    done
+  ' sh "$SIZE_THRESHOLD_BYTES" {} + |
 while IFS="	" read -r size src; do
   count=$((count + 1))
   rel=${src#"$SOURCE_BASE"/}
@@ -31,7 +40,7 @@ while IFS="	" read -r size src; do
     elif [ "$actual" -ne "$size" ]; then
       status="skip_size_changed"
       msg="actual=$actual"
-    elif [ "$actual" -ge "$SIZE_THRESHOLD_BYTES" ]; then
+    elif [ "$actual" -gt "$SIZE_THRESHOLD_BYTES" ]; then
       status="skip_over_threshold"
       msg="actual=$actual"
     else
