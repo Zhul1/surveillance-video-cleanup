@@ -23,7 +23,11 @@
         <section class="control-band">
           <div class="field-group folder-field">
             <label for="folderInput">视频目录</label>
-            <input id="folderInput" type="text" placeholder="/Volumes/NAS/监控视频/卧室" />
+            <div class="folder-input-row">
+              <input id="folderInput" type="text" placeholder="/Volumes/NAS/监控视频/卧室" />
+              <button id="browseBtn" type="button">选择目录</button>
+              <button id="openFolderBtn" type="button" disabled>打开目录</button>
+            </div>
           </div>
           <div class="rule-group">
             <label class="choice strong">

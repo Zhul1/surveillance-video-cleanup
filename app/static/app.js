@@ -4,6 +4,8 @@ const state = {
 };
 
 const folderInput = document.getElementById("folderInput");
+const browseBtn = document.getElementById("browseBtn");
+const openFolderBtn = document.getElementById("openFolderBtn");
 const sizeFilterEnabled = document.getElementById("sizeFilterEnabled");
 const thresholdInput = document.getElementById("thresholdInput");
 const staticFilterEnabled = document.getElementById("staticFilterEnabled");
@@ -72,6 +74,27 @@ function updateMetrics(summary) {
   metrics.candidateSize.textContent = `${summary.candidate_size_gb} GB`;
 }
 
+function folderValue() {
+  return folderInput.value.trim();
+}
+
+function updateActionState() {
+  const busy = state.busy;
+  const hasFolder = Boolean(folderValue());
+  browseBtn.disabled = busy;
+  openFolderBtn.disabled = busy || !hasFolder;
+  analyzeBtn.disabled = busy || !hasFolder;
+  organizeBtn.disabled = busy || !hasFolder;
+  deleteBtn.disabled = busy;
+  thresholdInput.disabled = busy || !sizeFilterEnabled.checked;
+  staticThresholdInput.disabled = busy || !staticFilterEnabled.checked;
+}
+
+function setBusy(isBusy) {
+  state.busy = isBusy;
+  updateActionState();
+}
+
 function selectedPaths() {
   return [...document.querySelectorAll(".candidate-check:checked")].map((input) => input.value);
 }
@@ -132,7 +155,7 @@ async function checkHealth() {
 }
 
 async function analyze() {
-  const folder = folderInput.value.trim();
+  const folder = folderValue();
   const threshold = Number(thresholdInput.value);
   const staticThreshold = Number(staticThresholdInput.value);
   if (!folder) {
@@ -140,7 +163,7 @@ async function analyze() {
     return;
   }
 
-  analyzeBtn.disabled = true;
+  setBusy(true);
   try {
     const result = await api("/api/analyze", {
       folder,
@@ -156,18 +179,18 @@ async function analyze() {
   } catch (error) {
     addLog(error.message, true);
   } finally {
-    analyzeBtn.disabled = false;
+    setBusy(false);
   }
 }
 
 async function organize() {
-  const folder = folderInput.value.trim();
+  const folder = folderValue();
   if (!folder) {
     addLog("请先输入要整理的视频目录", true);
     return;
   }
 
-  organizeBtn.disabled = true;
+  setBusy(true);
   try {
     const result = await api("/api/organize", { folder });
     addLog(`整理完成：移动 ${result.moved_count} 个文件，跳过 ${result.skipped_count} 个已在目标目录的文件。`);
@@ -175,12 +198,43 @@ async function organize() {
   } catch (error) {
     addLog(error.message, true);
   } finally {
-    organizeBtn.disabled = false;
+    setBusy(false);
+  }
+}
+
+async function pickFolder() {
+  setBusy(true);
+  try {
+    const result = await api("/api/pick-folder", {});
+    folderInput.value = result.folder;
+    state.folder = result.folder;
+    addLog(`已选择目录：${result.folder}`);
+  } catch (error) {
+    addLog(error.message, true);
+  } finally {
+    setBusy(false);
+  }
+}
+
+async function openFolder() {
+  const folder = folderValue();
+  if (!folder) {
+    addLog("请先输入或选择视频目录", true);
+    return;
+  }
+  setBusy(true);
+  try {
+    const result = await api("/api/open-folder", { folder });
+    addLog(`已打开目录：${result.opened}`);
+  } catch (error) {
+    addLog(error.message, true);
+  } finally {
+    setBusy(false);
   }
 }
 
 async function deleteSelected() {
-  const folder = folderInput.value.trim();
+  const folder = folderValue();
   const paths = selectedPaths();
   const mode = deleteMode.value;
 
@@ -199,7 +253,7 @@ async function deleteSelected() {
     return;
   }
 
-  deleteBtn.disabled = true;
+  setBusy(true);
   try {
     const result = await api("/api/delete", { folder, paths, mode });
     addLog(`处理完成：${modeText} ${result.deleted_count} 个，跳过 ${result.skipped_count} 个。`);
@@ -207,10 +261,13 @@ async function deleteSelected() {
   } catch (error) {
     addLog(error.message, true);
   } finally {
-    deleteBtn.disabled = false;
+    setBusy(false);
   }
 }
 
+browseBtn.addEventListener("click", pickFolder);
+openFolderBtn.addEventListener("click", openFolder);
+folderInput.addEventListener("input", updateActionState);
 analyzeBtn.addEventListener("click", analyze);
 organizeBtn.addEventListener("click", organize);
 deleteBtn.addEventListener("click", deleteSelected);
@@ -220,10 +277,11 @@ selectAll.addEventListener("change", (event) => {
   });
 });
 sizeFilterEnabled.addEventListener("change", () => {
-  thresholdInput.disabled = !sizeFilterEnabled.checked;
+  updateActionState();
 });
 staticFilterEnabled.addEventListener("change", () => {
-  staticThresholdInput.disabled = !staticFilterEnabled.checked;
+  updateActionState();
 });
 
 checkHealth();
+updateActionState();

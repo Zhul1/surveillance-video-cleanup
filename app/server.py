@@ -69,6 +69,41 @@ def sanitize_folder(raw_path: str) -> Path:
     return path
 
 
+def choose_folder() -> dict:
+    if sys.platform != "darwin":
+        raise ValueError("当前只支持在 macOS 上选择目录")
+    if shutil.which("osascript") is None:
+        raise ValueError("找不到 osascript，无法打开目录选择器")
+
+    proc = subprocess.run(
+        ["osascript", "-e", 'POSIX path of (choose folder with prompt "选择视频目录")'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=600,
+    )
+    if proc.returncode != 0:
+        raise ValueError("已取消选择目录")
+    folder = sanitize_folder(proc.stdout.strip())
+    return {"folder": str(folder)}
+
+
+def open_folder(raw_path: str) -> dict:
+    folder = sanitize_folder(raw_path)
+    if sys.platform == "darwin":
+        command = ["open", str(folder)]
+    elif sys.platform.startswith("linux"):
+        command = ["xdg-open", str(folder)]
+    elif sys.platform.startswith("win"):
+        command = ["explorer", str(folder)]
+    else:
+        raise ValueError("当前系统不支持打开目录")
+    if shutil.which(command[0]) is None:
+        raise ValueError(f"找不到 {command[0]}，无法打开目录")
+    subprocess.run(command, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
+    return {"opened": str(folder)}
+
+
 def iter_videos(base_dir: Path) -> Iterable[Path]:
     for root, dirnames, filenames in os.walk(base_dir):
         dirnames[:] = [name for name in dirnames if name not in IGNORE_DIR_NAMES]
@@ -442,6 +477,14 @@ class AppHandler(BaseHTTPRequestHandler):
                         static_threshold=static_threshold,
                     ),
                 )
+                return
+
+            if parsed.path == "/api/pick-folder":
+                json_response(self, choose_folder())
+                return
+
+            if parsed.path == "/api/open-folder":
+                json_response(self, open_folder(payload.get("folder", "")))
                 return
 
             if parsed.path == "/api/organize":

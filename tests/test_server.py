@@ -2,9 +2,10 @@ import tempfile
 import unittest
 import shutil
 import subprocess
+from unittest.mock import patch
 from pathlib import Path
 
-from app.server import analyze_folder, delete_selected, mean_abs_difference, organize_folder
+from app.server import analyze_folder, choose_folder, delete_selected, mean_abs_difference, open_folder, organize_folder
 
 
 class ServerWorkflowTest(unittest.TestCase):
@@ -94,6 +95,32 @@ class ServerWorkflowTest(unittest.TestCase):
             self.assertFalse(video.exists())
             self.assertTrue((base / ".nas-video-cleanup-trash" / "clip.mp4").exists())
             self.assertTrue(outside.exists())
+
+    @patch("app.server.shutil.which", return_value="/usr/bin/open")
+    @patch("app.server.subprocess.run")
+    def test_open_folder_validates_and_uses_system_opener(self, run_mock, _which_mock):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = open_folder(tmp)
+
+            self.assertEqual(result["opened"], str(Path(tmp).resolve()))
+            run_mock.assert_called_once()
+            self.assertEqual(run_mock.call_args.args[0][:1], ["open"])
+
+    @patch("app.server.sys.platform", "darwin")
+    @patch("app.server.shutil.which", return_value="/usr/bin/osascript")
+    @patch("app.server.subprocess.run")
+    def test_choose_folder_returns_selected_path(self, run_mock, _which_mock):
+        with tempfile.TemporaryDirectory() as tmp:
+            run_mock.return_value = subprocess.CompletedProcess(
+                args=[],
+                returncode=0,
+                stdout=f"{tmp}\n",
+                stderr="",
+            )
+
+            result = choose_folder()
+
+            self.assertEqual(result["folder"], str(Path(tmp).resolve()))
 
 
 if __name__ == "__main__":

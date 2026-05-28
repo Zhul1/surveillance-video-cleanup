@@ -132,6 +132,16 @@ select {
   color: var(--text);
 }
 
+.folder-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+}
+
+.folder-input-row button {
+  white-space: nowrap;
+}
+
 input:disabled {
   opacity: 0.55;
   cursor: not-allowed;
