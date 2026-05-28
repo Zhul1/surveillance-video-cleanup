@@ -147,9 +147,15 @@ select {
   white-space: nowrap;
 }
 
+button:disabled,
 input:disabled {
   opacity: 0.55;
   cursor: not-allowed;
+}
+
+button:disabled:hover {
+  transform: none;
+  border-color: var(--line);
 }
 
 .compact-input {
@@ -231,6 +237,16 @@ button.danger {
 .progress-head {
   color: var(--muted);
   font-size: 13px;
+}
+
+.progress-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.progress-actions button {
+  min-width: 86px;
 }
 
 .progress-track {

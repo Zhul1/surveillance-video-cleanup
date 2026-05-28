@@ -7,9 +7,11 @@ import time
 from unittest.mock import patch
 from pathlib import Path
 
+import app.server as server
 from app.server import (
     analyze_folder,
     choose_folder,
+    control_analyze_job,
     create_server,
     delete_selected,
     get_analyze_job,
@@ -68,6 +70,54 @@ class ServerWorkflowTest(unittest.TestCase):
             self.assertEqual(status["processed"], 2)
             self.assertEqual(status["remaining"], 0)
             self.assertEqual(status["result"]["summary"]["candidate_count"], 1)
+
+    def test_async_analyze_job_can_pause_resume_and_stop(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            for index in range(12):
+                (base / f"20240101{index:02d}_clip.mp4").write_bytes(b"x" * 10)
+
+            original_build_entry = server.build_entry
+
+            def slow_build_entry(*args, **kwargs):
+                time.sleep(0.03)
+                return original_build_entry(*args, **kwargs)
+
+            with patch("app.server.build_entry", side_effect=slow_build_entry):
+                status = start_analyze_job(
+                    base,
+                    threshold_mb=1.0,
+                    use_size_filter=True,
+                    use_static_filter=False,
+                    static_threshold=2.0,
+                )
+                job_id = status["job_id"]
+
+                control_analyze_job(job_id, "pause")
+                for _ in range(40):
+                    status = get_analyze_job(job_id)
+                    if status["state"] == "paused":
+                        break
+                    time.sleep(0.05)
+
+                self.assertEqual(status["state"], "paused")
+
+                control_analyze_job(job_id, "resume")
+                resumed = get_analyze_job(job_id)
+                self.assertEqual(resumed["state"], "running")
+
+                control_analyze_job(job_id, "stop")
+                for _ in range(40):
+                    status = get_analyze_job(job_id)
+                    if status["state"] == "stopped":
+                        break
+                    time.sleep(0.05)
+
+            self.assertEqual(status["state"], "stopped")
+            self.assertLess(status["processed"], status["total"])
+            self.assertIsNotNone(status["result"])
+            self.assertEqual(status["result"]["summary"]["video_count"], 12)
+            self.assertEqual(status["result"]["summary"]["analyzed_count"], status["processed"])
 
     def test_mean_abs_difference(self):
         self.assertEqual(mean_abs_difference(bytes([0, 10, 255]), bytes([0, 20, 250])), 5.0)

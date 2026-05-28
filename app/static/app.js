@@ -27,6 +27,8 @@ const progressProcessed = document.getElementById("progressProcessed");
 const progressRemaining = document.getElementById("progressRemaining");
 const progressCandidates = document.getElementById("progressCandidates");
 const progressFile = document.getElementById("progressFile");
+const pauseAnalyzeBtn = document.getElementById("pauseAnalyzeBtn");
+const stopAnalyzeBtn = document.getElementById("stopAnalyzeBtn");
 
 const metrics = {
   videos: document.getElementById("metricVideos"),
@@ -99,11 +101,16 @@ function folderValue() {
 function updateActionState() {
   const busy = state.busy;
   const hasFolder = Boolean(folderValue());
+  const analyzing = Boolean(state.currentAnalyzeJob);
+  const canPause = analyzing && !["stopping", "stopped", "done", "error"].includes(state.analyzeState);
+  const canStop = analyzing && !["stopping", "stopped", "done", "error"].includes(state.analyzeState);
   browseBtn.disabled = busy;
   openFolderBtn.disabled = busy || !hasFolder;
   analyzeBtn.disabled = busy || !hasFolder;
   organizeBtn.disabled = busy || !hasFolder;
   deleteBtn.disabled = busy;
+  pauseAnalyzeBtn.disabled = !canPause;
+  stopAnalyzeBtn.disabled = !canStop;
   thresholdInput.disabled = busy || !sizeFilterEnabled.checked;
   staticThresholdInput.disabled = busy || !staticFilterEnabled.checked;
 }
@@ -129,6 +136,10 @@ function renderProgress(status) {
     queued: "等待分析",
     collecting: "正在统计视频",
     analyzing: "正在分析视频",
+    pausing: "正在暂停",
+    paused: "已暂停",
+    stopping: "正在停止",
+    stopped: "已停止",
     done: "分析完成",
     error: "分析失败",
   }[status.phase] || "正在分析";
@@ -141,7 +152,15 @@ function renderProgress(status) {
   progressProcessed.textContent = processed;
   progressRemaining.textContent = status.remaining ?? Math.max(total - processed, 0);
   progressCandidates.textContent = status.candidate_count || 0;
-  progressFile.textContent = status.current_path || (status.state === "done" ? "分析完成" : "等待文件");
+  const fallbackFileText = {
+    done: "分析完成",
+    stopped: "分析已停止",
+    paused: "等待继续",
+  }[status.state] || "等待文件";
+  progressFile.textContent = status.current_path || fallbackFileText;
+  state.analyzeState = status.state;
+  pauseAnalyzeBtn.textContent = status.state === "paused" ? "继续" : "暂停";
+  updateActionState();
 }
 
 function selectedPaths() {
@@ -254,10 +273,41 @@ async function pollAnalyze(jobId) {
       setBusy(false);
       return;
     }
+    if (status.state === "stopped") {
+      updateMetrics(status.result.summary);
+      renderCandidates(status.result.candidates);
+      addLog(
+        `分析已停止：已分析 ${status.processed}/${status.total} 个视频，当前命中 ${status.result.summary.candidate_count} 个候选项。`,
+        true
+      );
+      state.currentAnalyzeJob = null;
+      setBusy(false);
+      return;
+    }
     state.analyzeTimer = window.setTimeout(() => pollAnalyze(jobId), 700);
   } catch (error) {
     addLog(error.message, true);
     setBusy(false);
+  }
+}
+
+async function controlAnalyze(action) {
+  const jobId = state.currentAnalyzeJob;
+  if (!jobId) {
+    return;
+  }
+  try {
+    const status = await api("/api/analyze/control", { job_id: jobId, action });
+    renderProgress(status);
+    if (action === "pause") {
+      addLog("分析已请求暂停，当前视频处理完后会停住。");
+    } else if (action === "resume") {
+      addLog("分析已继续。");
+    } else {
+      addLog("分析已请求停止，当前视频处理完后结束。", true);
+    }
+  } catch (error) {
+    addLog(error.message, true);
   }
 }
 
@@ -355,6 +405,10 @@ browseBtn.addEventListener("click", pickFolder);
 openFolderBtn.addEventListener("click", openFolder);
 folderInput.addEventListener("input", updateActionState);
 analyzeBtn.addEventListener("click", analyze);
+pauseAnalyzeBtn.addEventListener("click", () => {
+  controlAnalyze(state.analyzeState === "paused" ? "resume" : "pause");
+});
+stopAnalyzeBtn.addEventListener("click", () => controlAnalyze("stop"));
 organizeBtn.addEventListener("click", organize);
 deleteBtn.addEventListener("click", deleteSelected);
 selectAll.addEventListener("change", (event) => {

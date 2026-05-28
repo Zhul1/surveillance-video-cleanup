@@ -420,10 +420,12 @@ def format_analysis_result(
     use_static_filter: bool,
     static_threshold: float,
     entries: list[VideoEntry],
+    total_video_count: int | None = None,
 ) -> dict:
     candidates = [asdict(entry) for entry in entries if entry.is_candidate]
     organize_count = sum(1 for entry in entries if entry.needs_organize)
     total_size = sum(entry.size_bytes for entry in entries)
+    video_count = len(entries) if total_video_count is None else total_video_count
     return {
         "folder": str(base_dir),
         "threshold_mb": threshold_mb,
@@ -431,7 +433,8 @@ def format_analysis_result(
         "use_static_filter": use_static_filter,
         "static_threshold": static_threshold,
         "summary": {
-            "video_count": len(entries),
+            "video_count": video_count,
+            "analyzed_count": len(entries),
             "candidate_count": len(candidates),
             "organize_count": organize_count,
             "total_size_gb": round(total_size / (1024 * 1024 * 1024), 2),
@@ -458,6 +461,7 @@ def job_payload(job: dict) -> dict:
         "elapsed_seconds": elapsed,
         "error": job.get("error", ""),
         "result": job.get("result"),
+        "control": job.get("control", "run"),
     }
 
 
@@ -477,6 +481,51 @@ def get_analyze_job(job_id: str) -> dict:
         return job_payload(job)
 
 
+def control_analyze_job(job_id: str, action: str) -> dict:
+    if action not in {"pause", "resume", "stop"}:
+        raise ValueError("分析控制命令无效")
+    with ANALYZE_JOBS_LOCK:
+        job = ANALYZE_JOBS.get(job_id)
+        if not job:
+            raise ValueError("分析任务不存在")
+        if job["state"] in {"done", "error", "stopped"}:
+            return job_payload(job)
+        if action == "pause":
+            job["control"] = "pause"
+            if job["state"] not in {"paused", "pause_requested"}:
+                job["state"] = "pause_requested"
+                job["phase"] = "pausing"
+        elif action == "resume":
+            job["control"] = "run"
+            job["state"] = "running"
+            job["phase"] = "analyzing"
+        else:
+            job["control"] = "stop"
+            job["state"] = "stopping"
+            job["phase"] = "stopping"
+        return job_payload(job)
+
+
+def wait_for_analyze_control(job_id: str) -> str:
+    while True:
+        with ANALYZE_JOBS_LOCK:
+            job = ANALYZE_JOBS.get(job_id)
+            if not job:
+                return "stop"
+            control = job.get("control", "run")
+            if control == "stop":
+                return "stop"
+            if control == "pause":
+                job["state"] = "paused"
+                job["phase"] = "paused"
+            else:
+                if job["state"] == "paused":
+                    job["state"] = "running"
+                    job["phase"] = "analyzing"
+                return "run"
+        time.sleep(0.2)
+
+
 def run_analyze_job(
     job_id: str,
     base_dir: Path,
@@ -492,26 +541,33 @@ def run_analyze_job(
         update_analyze_job(job_id, state="running", phase="collecting", current_path="")
         video_paths = list(iter_videos(base_dir))
         update_analyze_job(job_id, phase="analyzing", total=len(video_paths), processed=0)
+        entries: list[VideoEntry] = []
+        stopped = False
 
-        def progress(processed: int, path: Path, entry: VideoEntry) -> None:
+        for index, path in enumerate(video_paths, 1):
+            if wait_for_analyze_control(job_id) == "stop":
+                stopped = True
+                break
+            entry = build_entry(
+                base_dir,
+                path,
+                threshold_bytes,
+                use_size_filter,
+                use_static_filter,
+                static_threshold,
+            )
+            entries.append(entry)
             with ANALYZE_JOBS_LOCK:
                 job = ANALYZE_JOBS.get(job_id)
                 if not job:
                     return
-                job["processed"] = processed
+                job["processed"] = index
                 job["current_path"] = str(path)
                 if entry.is_candidate:
                     job["candidate_count"] = job.get("candidate_count", 0) + 1
-
-        entries = analyze_entries(
-            base_dir,
-            video_paths,
-            threshold_bytes,
-            use_size_filter,
-            use_static_filter,
-            static_threshold,
-            progress_callback=progress,
-        )
+                if job.get("control") == "stop":
+                    stopped = True
+        entries.sort(key=lambda item: item.path)
         result = format_analysis_result(
             base_dir,
             threshold_mb,
@@ -519,7 +575,18 @@ def run_analyze_job(
             use_static_filter,
             static_threshold,
             entries,
+            total_video_count=len(video_paths),
         )
+        if stopped:
+            update_analyze_job(
+                job_id,
+                state="stopped",
+                phase="stopped",
+                current_path="",
+                candidate_count=result["summary"]["candidate_count"],
+                result=result,
+            )
+            return
         update_analyze_job(
             job_id,
             state="done",
@@ -553,6 +620,7 @@ def start_analyze_job(
         "current_path": "",
         "error": "",
         "result": None,
+        "control": "run",
         "started_at": time.monotonic(),
     }
     with ANALYZE_JOBS_LOCK:
@@ -675,6 +743,16 @@ class AppHandler(BaseHTTPRequestHandler):
                 if not isinstance(job_id, str) or not job_id:
                     raise ValueError("分析任务 ID 无效")
                 json_response(self, get_analyze_job(job_id))
+                return
+
+            if parsed.path == "/api/analyze/control":
+                job_id = payload.get("job_id", "")
+                action = payload.get("action", "")
+                if not isinstance(job_id, str) or not job_id:
+                    raise ValueError("分析任务 ID 无效")
+                if not isinstance(action, str):
+                    raise ValueError("分析控制命令无效")
+                json_response(self, control_analyze_job(job_id, action))
                 return
 
             if parsed.path == "/api/pick-folder":
