@@ -6,6 +6,7 @@ import mimetypes
 import os
 import re
 import shutil
+import errno
 import subprocess
 import sys
 from dataclasses import asdict, dataclass
@@ -536,10 +537,26 @@ class AppHandler(BaseHTTPRequestHandler):
         sys.stdout.write("%s - - [%s] %s\n" % (self.address_string(), self.log_date_time_string(), format % args))
 
 
+def create_server(port: int, max_attempts: int = 20) -> ThreadingHTTPServer:
+    last_error = None
+    for candidate_port in range(port, port + max_attempts):
+        try:
+            server = ThreadingHTTPServer(("127.0.0.1", candidate_port), AppHandler)
+            if candidate_port != port:
+                print(f"Port {port} is busy; using {candidate_port} instead.")
+            return server
+        except OSError as exc:
+            if exc.errno != errno.EADDRINUSE:
+                raise
+            last_error = exc
+    raise OSError(errno.EADDRINUSE, f"No available port from {port} to {port + max_attempts - 1}") from last_error
+
+
 def main() -> None:
     port = int(os.environ.get("PORT", "8765"))
-    server = ThreadingHTTPServer(("127.0.0.1", port), AppHandler)
-    print(f"NAS Video Cleanup UI running at http://127.0.0.1:{port}")
+    server = create_server(port)
+    actual_port = server.server_address[1]
+    print(f"NAS Video Cleanup UI running at http://127.0.0.1:{actual_port}")
     server.serve_forever()
 
 

@@ -1,11 +1,20 @@
 import tempfile
 import unittest
 import shutil
+import errno
 import subprocess
 from unittest.mock import patch
 from pathlib import Path
 
-from app.server import analyze_folder, choose_folder, delete_selected, mean_abs_difference, open_folder, organize_folder
+from app.server import (
+    analyze_folder,
+    choose_folder,
+    create_server,
+    delete_selected,
+    mean_abs_difference,
+    open_folder,
+    organize_folder,
+)
 
 
 class ServerWorkflowTest(unittest.TestCase):
@@ -121,6 +130,16 @@ class ServerWorkflowTest(unittest.TestCase):
             result = choose_folder()
 
             self.assertEqual(result["folder"], str(Path(tmp).resolve()))
+
+    def test_create_server_uses_next_port_when_default_is_busy(self):
+        fake_server = type("FakeServer", (), {"server_address": ("127.0.0.1", 8766)})()
+        busy_error = OSError(errno.EADDRINUSE, "Address already in use")
+        with patch("app.server.ThreadingHTTPServer", side_effect=[busy_error, fake_server]) as server_mock:
+            server = create_server(8765, max_attempts=2)
+
+        self.assertIs(server, fake_server)
+        self.assertEqual(server_mock.call_args_list[0].args[0], ("127.0.0.1", 8765))
+        self.assertEqual(server_mock.call_args_list[1].args[0], ("127.0.0.1", 8766))
 
 
 if __name__ == "__main__":
