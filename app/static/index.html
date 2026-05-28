@@ -55,6 +55,31 @@
           </div>
         </section>
 
+        <section class="progress-band" id="progressBand" hidden>
+          <div class="progress-head">
+            <span id="progressTitle">准备分析</span>
+            <span id="progressTime">0 秒</span>
+          </div>
+          <div class="progress-track">
+            <span id="progressBar"></span>
+          </div>
+          <div class="progress-grid">
+            <div>
+              <span>已分析</span>
+              <strong id="progressProcessed">0</strong>
+            </div>
+            <div>
+              <span>剩余</span>
+              <strong id="progressRemaining">0</strong>
+            </div>
+            <div>
+              <span>候选</span>
+              <strong id="progressCandidates">0</strong>
+            </div>
+          </div>
+          <div class="progress-file" id="progressFile">等待开始</div>
+        </section>
+
         <section class="stats-band" id="statsBand">
           <div class="metric">
             <span class="metric-label">视频总数</span>

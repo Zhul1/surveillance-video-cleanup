@@ -17,6 +17,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
@@ -93,6 +97,7 @@ h1 {
 }
 
 .control-band,
+.progress-band,
 .stats-band,
 .content-band {
   display: grid;
@@ -206,6 +211,63 @@ button.danger {
 
 .stats-band {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.progress-band {
+  padding: 16px 18px;
+  border: 1px solid rgba(20, 32, 51, 0.08);
+  border-radius: 8px;
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.progress-head,
+.progress-grid {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.progress-head {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.progress-track {
+  height: 10px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(20, 32, 51, 0.08);
+}
+
+.progress-track span {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width 180ms ease;
+}
+
+.progress-grid {
+  justify-content: flex-start;
+  flex-wrap: wrap;
+}
+
+.progress-grid div {
+  min-width: 110px;
+  display: grid;
+  gap: 4px;
+}
+
+.progress-grid span,
+.progress-file {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.progress-file {
+  word-break: break-all;
 }
 
 .metric,

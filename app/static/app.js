@@ -19,6 +19,14 @@ const candidateTable = document.getElementById("candidateTable");
 const logList = document.getElementById("logList");
 const healthDot = document.getElementById("healthDot");
 const healthText = document.getElementById("healthText");
+const progressBand = document.getElementById("progressBand");
+const progressTitle = document.getElementById("progressTitle");
+const progressTime = document.getElementById("progressTime");
+const progressBar = document.getElementById("progressBar");
+const progressProcessed = document.getElementById("progressProcessed");
+const progressRemaining = document.getElementById("progressRemaining");
+const progressCandidates = document.getElementById("progressCandidates");
+const progressFile = document.getElementById("progressFile");
 
 const metrics = {
   videos: document.getElementById("metricVideos"),
@@ -74,6 +82,16 @@ function updateMetrics(summary) {
   metrics.candidateSize.textContent = `${summary.candidate_size_gb} GB`;
 }
 
+function analysisPayload(folder) {
+  return {
+    folder,
+    threshold_mb: Number(thresholdInput.value),
+    use_size_filter: sizeFilterEnabled.checked,
+    use_static_filter: staticFilterEnabled.checked,
+    static_threshold: Number(staticThresholdInput.value),
+  };
+}
+
 function folderValue() {
   return folderInput.value.trim();
 }
@@ -93,6 +111,37 @@ function updateActionState() {
 function setBusy(isBusy) {
   state.busy = isBusy;
   updateActionState();
+}
+
+function formatElapsed(seconds) {
+  const total = Math.max(0, Math.floor(seconds || 0));
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
+  if (minutes > 0) {
+    return `${minutes}分${rest}秒`;
+  }
+  return `${rest}秒`;
+}
+
+function renderProgress(status) {
+  progressBand.hidden = false;
+  const phaseText = {
+    queued: "等待分析",
+    collecting: "正在统计视频",
+    analyzing: "正在分析视频",
+    done: "分析完成",
+    error: "分析失败",
+  }[status.phase] || "正在分析";
+  const total = Number(status.total || 0);
+  const processed = Number(status.processed || 0);
+  const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  progressTitle.textContent = total > 0 ? `${phaseText} ${percent}%` : phaseText;
+  progressTime.textContent = formatElapsed(status.elapsed_seconds);
+  progressBar.style.width = `${percent}%`;
+  progressProcessed.textContent = processed;
+  progressRemaining.textContent = status.remaining ?? Math.max(total - processed, 0);
+  progressCandidates.textContent = status.candidate_count || 0;
+  progressFile.textContent = status.current_path || (status.state === "done" ? "分析完成" : "等待文件");
 }
 
 function selectedPaths() {
@@ -156,29 +205,58 @@ async function checkHealth() {
 
 async function analyze() {
   const folder = folderValue();
-  const threshold = Number(thresholdInput.value);
-  const staticThreshold = Number(staticThresholdInput.value);
   if (!folder) {
     addLog("请先输入要处理的视频目录", true);
     return;
   }
 
+  if (state.analyzeTimer) {
+    clearTimeout(state.analyzeTimer);
+    state.analyzeTimer = null;
+  }
   setBusy(true);
   try {
-    const result = await api("/api/analyze", {
-      folder,
-      threshold_mb: threshold,
-      use_size_filter: sizeFilterEnabled.checked,
-      use_static_filter: staticFilterEnabled.checked,
-      static_threshold: staticThreshold,
-    });
+    renderCandidates([]);
+    addLog("分析任务已启动");
+    const status = await api("/api/analyze/start", analysisPayload(folder));
     state.folder = folder;
-    updateMetrics(result.summary);
-    renderCandidates(result.candidates);
-    addLog(`分析完成：共 ${result.summary.video_count} 个视频，命中 ${result.summary.candidate_count} 个候选项。`);
+    state.currentAnalyzeJob = status.job_id;
+    renderProgress(status);
+    pollAnalyze(status.job_id);
   } catch (error) {
     addLog(error.message, true);
-  } finally {
+    state.currentAnalyzeJob = null;
+    setBusy(false);
+  }
+}
+
+async function pollAnalyze(jobId) {
+  try {
+    if (state.currentAnalyzeJob && jobId !== state.currentAnalyzeJob) {
+      return;
+    }
+    const status = await api("/api/analyze/status", { job_id: jobId });
+    if (state.currentAnalyzeJob && jobId !== state.currentAnalyzeJob) {
+      return;
+    }
+    renderProgress(status);
+    if (status.state === "done") {
+      updateMetrics(status.result.summary);
+      renderCandidates(status.result.candidates);
+      addLog(`分析完成：共 ${status.result.summary.video_count} 个视频，命中 ${status.result.summary.candidate_count} 个候选项。`);
+      state.currentAnalyzeJob = null;
+      setBusy(false);
+      return;
+    }
+    if (status.state === "error") {
+      addLog(status.error || "分析失败", true);
+      state.currentAnalyzeJob = null;
+      setBusy(false);
+      return;
+    }
+    state.analyzeTimer = window.setTimeout(() => pollAnalyze(jobId), 700);
+  } catch (error) {
+    addLog(error.message, true);
     setBusy(false);
   }
 }
@@ -191,14 +269,18 @@ async function organize() {
   }
 
   setBusy(true);
+  let shouldAnalyze = false;
   try {
     const result = await api("/api/organize", { folder });
     addLog(`整理完成：移动 ${result.moved_count} 个文件，跳过 ${result.skipped_count} 个已在目标目录的文件。`);
-    await analyze();
+    shouldAnalyze = true;
   } catch (error) {
     addLog(error.message, true);
   } finally {
     setBusy(false);
+  }
+  if (shouldAnalyze) {
+    await analyze();
   }
 }
 
@@ -254,14 +336,18 @@ async function deleteSelected() {
   }
 
   setBusy(true);
+  let shouldAnalyze = false;
   try {
     const result = await api("/api/delete", { folder, paths, mode });
     addLog(`处理完成：${modeText} ${result.deleted_count} 个，跳过 ${result.skipped_count} 个。`);
-    await analyze();
+    shouldAnalyze = true;
   } catch (error) {
     addLog(error.message, true);
   } finally {
     setBusy(false);
+  }
+  if (shouldAnalyze) {
+    await analyze();
   }
 }
 

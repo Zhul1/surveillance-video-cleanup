@@ -9,6 +9,9 @@ import shutil
 import errno
 import subprocess
 import sys
+import threading
+import time
+import uuid
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from http import HTTPStatus
@@ -29,6 +32,8 @@ DATE_PATTERNS = [
     re.compile(r"(?P<stamp>20\d{8})"),  # YYYYMMDDHH
     re.compile(r"(?P<stamp>20\d{6})"),  # YYYYMMDD
 ]
+ANALYZE_JOBS: dict[str, dict] = {}
+ANALYZE_JOBS_LOCK = threading.Lock()
 
 
 @dataclass
@@ -364,8 +369,36 @@ def analyze_folder(
     threshold_bytes = int(threshold_mb * 1024 * 1024)
     if use_static_filter and not ffmpeg_tools_available():
         raise ValueError("首尾帧检测需要安装 ffmpeg 和 ffprobe")
-    entries = [
-        build_entry(
+    entries = analyze_entries(
+        base_dir,
+        list(iter_videos(base_dir)),
+        threshold_bytes,
+        use_size_filter,
+        use_static_filter,
+        static_threshold,
+    )
+    return format_analysis_result(
+        base_dir,
+        threshold_mb,
+        use_size_filter,
+        use_static_filter,
+        static_threshold,
+        entries,
+    )
+
+
+def analyze_entries(
+    base_dir: Path,
+    video_paths: list[Path],
+    threshold_bytes: int,
+    use_size_filter: bool,
+    use_static_filter: bool,
+    static_threshold: float,
+    progress_callback=None,
+) -> list[VideoEntry]:
+    entries = []
+    for index, path in enumerate(video_paths, 1):
+        entry = build_entry(
             base_dir,
             path,
             threshold_bytes,
@@ -373,9 +406,21 @@ def analyze_folder(
             use_static_filter,
             static_threshold,
         )
-        for path in iter_videos(base_dir)
-    ]
+        entries.append(entry)
+        if progress_callback:
+            progress_callback(index, path, entry)
     entries.sort(key=lambda item: item.path)
+    return entries
+
+
+def format_analysis_result(
+    base_dir: Path,
+    threshold_mb: float,
+    use_size_filter: bool,
+    use_static_filter: bool,
+    static_threshold: float,
+    entries: list[VideoEntry],
+) -> dict:
     candidates = [asdict(entry) for entry in entries if entry.is_candidate]
     organize_count = sum(1 for entry in entries if entry.needs_organize)
     total_size = sum(entry.size_bytes for entry in entries)
@@ -394,6 +439,144 @@ def analyze_folder(
         },
         "candidates": candidates,
     }
+
+
+def job_payload(job: dict) -> dict:
+    elapsed = round(time.monotonic() - job["started_at"], 1)
+    total = job.get("total", 0)
+    processed = job.get("processed", 0)
+    return {
+        "job_id": job["job_id"],
+        "state": job["state"],
+        "phase": job["phase"],
+        "folder": job["folder"],
+        "processed": processed,
+        "total": total,
+        "remaining": max(total - processed, 0),
+        "candidate_count": job.get("candidate_count", 0),
+        "current_path": job.get("current_path", ""),
+        "elapsed_seconds": elapsed,
+        "error": job.get("error", ""),
+        "result": job.get("result"),
+    }
+
+
+def update_analyze_job(job_id: str, **changes) -> None:
+    with ANALYZE_JOBS_LOCK:
+        job = ANALYZE_JOBS.get(job_id)
+        if not job:
+            return
+        job.update(changes)
+
+
+def get_analyze_job(job_id: str) -> dict:
+    with ANALYZE_JOBS_LOCK:
+        job = ANALYZE_JOBS.get(job_id)
+        if not job:
+            raise ValueError("分析任务不存在")
+        return job_payload(job)
+
+
+def run_analyze_job(
+    job_id: str,
+    base_dir: Path,
+    threshold_mb: float,
+    use_size_filter: bool,
+    use_static_filter: bool,
+    static_threshold: float,
+) -> None:
+    try:
+        if use_static_filter and not ffmpeg_tools_available():
+            raise ValueError("首尾帧检测需要安装 ffmpeg 和 ffprobe")
+        threshold_bytes = int(threshold_mb * 1024 * 1024)
+        update_analyze_job(job_id, state="running", phase="collecting", current_path="")
+        video_paths = list(iter_videos(base_dir))
+        update_analyze_job(job_id, phase="analyzing", total=len(video_paths), processed=0)
+
+        def progress(processed: int, path: Path, entry: VideoEntry) -> None:
+            with ANALYZE_JOBS_LOCK:
+                job = ANALYZE_JOBS.get(job_id)
+                if not job:
+                    return
+                job["processed"] = processed
+                job["current_path"] = str(path)
+                if entry.is_candidate:
+                    job["candidate_count"] = job.get("candidate_count", 0) + 1
+
+        entries = analyze_entries(
+            base_dir,
+            video_paths,
+            threshold_bytes,
+            use_size_filter,
+            use_static_filter,
+            static_threshold,
+            progress_callback=progress,
+        )
+        result = format_analysis_result(
+            base_dir,
+            threshold_mb,
+            use_size_filter,
+            use_static_filter,
+            static_threshold,
+            entries,
+        )
+        update_analyze_job(
+            job_id,
+            state="done",
+            phase="done",
+            processed=len(video_paths),
+            total=len(video_paths),
+            current_path="",
+            candidate_count=result["summary"]["candidate_count"],
+            result=result,
+        )
+    except Exception as exc:
+        update_analyze_job(job_id, state="error", phase="error", error=str(exc), current_path="")
+
+
+def start_analyze_job(
+    base_dir: Path,
+    threshold_mb: float,
+    use_size_filter: bool,
+    use_static_filter: bool,
+    static_threshold: float,
+) -> dict:
+    job_id = uuid.uuid4().hex
+    job = {
+        "job_id": job_id,
+        "state": "queued",
+        "phase": "queued",
+        "folder": str(base_dir),
+        "processed": 0,
+        "total": 0,
+        "candidate_count": 0,
+        "current_path": "",
+        "error": "",
+        "result": None,
+        "started_at": time.monotonic(),
+    }
+    with ANALYZE_JOBS_LOCK:
+        ANALYZE_JOBS[job_id] = job
+    thread = threading.Thread(
+        target=run_analyze_job,
+        args=(job_id, base_dir, threshold_mb, use_size_filter, use_static_filter, static_threshold),
+        daemon=True,
+    )
+    thread.start()
+    return job_payload(job)
+
+
+def parse_analyze_payload(payload: dict) -> tuple[Path, float, bool, bool, float]:
+    base_dir = sanitize_folder(payload.get("folder", ""))
+    threshold_mb = float(payload.get("threshold_mb", 1.0))
+    use_size_filter = bool(payload.get("use_size_filter", True))
+    use_static_filter = bool(payload.get("use_static_filter", False))
+    static_threshold = float(payload.get("static_threshold", 2.0))
+    if threshold_mb <= 0:
+        raise ValueError("阈值必须大于 0")
+    if static_threshold < 0:
+        raise ValueError("静态差异阈值不能小于 0")
+    return base_dir, threshold_mb, use_size_filter, use_static_filter, static_threshold
 
 
 def organize_folder(base_dir: Path) -> dict:
@@ -459,15 +642,7 @@ class AppHandler(BaseHTTPRequestHandler):
 
         try:
             if parsed.path == "/api/analyze":
-                base_dir = sanitize_folder(payload.get("folder", ""))
-                threshold_mb = float(payload.get("threshold_mb", 1.0))
-                use_size_filter = bool(payload.get("use_size_filter", True))
-                use_static_filter = bool(payload.get("use_static_filter", False))
-                static_threshold = float(payload.get("static_threshold", 2.0))
-                if threshold_mb <= 0:
-                    raise ValueError("阈值必须大于 0")
-                if static_threshold < 0:
-                    raise ValueError("静态差异阈值不能小于 0")
+                base_dir, threshold_mb, use_size_filter, use_static_filter, static_threshold = parse_analyze_payload(payload)
                 json_response(
                     self,
                     analyze_folder(
@@ -478,6 +653,28 @@ class AppHandler(BaseHTTPRequestHandler):
                         static_threshold=static_threshold,
                     ),
                 )
+                return
+
+            if parsed.path == "/api/analyze/start":
+                base_dir, threshold_mb, use_size_filter, use_static_filter, static_threshold = parse_analyze_payload(payload)
+                json_response(
+                    self,
+                    start_analyze_job(
+                        base_dir,
+                        threshold_mb,
+                        use_size_filter=use_size_filter,
+                        use_static_filter=use_static_filter,
+                        static_threshold=static_threshold,
+                    ),
+                    HTTPStatus.ACCEPTED,
+                )
+                return
+
+            if parsed.path == "/api/analyze/status":
+                job_id = payload.get("job_id", "")
+                if not isinstance(job_id, str) or not job_id:
+                    raise ValueError("分析任务 ID 无效")
+                json_response(self, get_analyze_job(job_id))
                 return
 
             if parsed.path == "/api/pick-folder":

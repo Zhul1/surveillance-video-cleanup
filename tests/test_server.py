@@ -3,6 +3,7 @@ import unittest
 import shutil
 import errno
 import subprocess
+import time
 from unittest.mock import patch
 from pathlib import Path
 
@@ -11,9 +12,11 @@ from app.server import (
     choose_folder,
     create_server,
     delete_selected,
+    get_analyze_job,
     mean_abs_difference,
     open_folder,
     organize_folder,
+    start_analyze_job,
 )
 
 
@@ -39,6 +42,32 @@ class ServerWorkflowTest(unittest.TestCase):
             result = analyze_folder(base, threshold_mb=1.0, use_size_filter=False)
 
             self.assertEqual(result["summary"]["candidate_count"], 0)
+
+    def test_async_analyze_job_reports_result(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "2024010100_a.mp4").write_bytes(b"x" * 10)
+            (base / "2024010101_b.mp4").write_bytes(b"x" * 2048)
+
+            status = start_analyze_job(
+                base,
+                threshold_mb=16 / (1024 * 1024),
+                use_size_filter=True,
+                use_static_filter=False,
+                static_threshold=2.0,
+            )
+            job_id = status["job_id"]
+
+            for _ in range(40):
+                status = get_analyze_job(job_id)
+                if status["state"] == "done":
+                    break
+                time.sleep(0.05)
+
+            self.assertEqual(status["state"], "done")
+            self.assertEqual(status["processed"], 2)
+            self.assertEqual(status["remaining"], 0)
+            self.assertEqual(status["result"]["summary"]["candidate_count"], 1)
 
     def test_mean_abs_difference(self):
         self.assertEqual(mean_abs_difference(bytes([0, 10, 255]), bytes([0, 20, 250])), 5.0)
