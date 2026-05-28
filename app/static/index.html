@@ -25,11 +25,24 @@
             <label for="folderInput">视频目录</label>
             <input id="folderInput" type="text" placeholder="/Volumes/NAS/监控视频/卧室" />
           </div>
-          <div class="field-group threshold-field">
-            <label for="thresholdInput">候选阈值</label>
+          <div class="rule-group">
+            <label class="choice strong">
+              <input id="sizeFilterEnabled" type="checkbox" checked />
+              <span>按大小筛选</span>
+            </label>
             <div class="compact-input">
               <input id="thresholdInput" type="number" min="0.1" step="0.1" value="1.0" />
               <span>MB</span>
+            </div>
+          </div>
+          <div class="rule-group">
+            <label class="choice strong">
+              <input id="staticFilterEnabled" type="checkbox" />
+              <span>首尾帧一致</span>
+            </label>
+            <div class="compact-input">
+              <input id="staticThresholdInput" type="number" min="0" step="0.1" value="2.0" disabled />
+              <span>diff</span>
             </div>
           </div>
           <div class="action-strip">
@@ -62,7 +75,7 @@
             <div class="panel-head">
               <div>
                 <h2>候选视频</h2>
-                <p>小于阈值的视频会先列在这里，由你决定后续处理。</p>
+                <p>命中筛选规则的视频会先列在这里，由你决定后续处理。</p>
               </div>
               <div class="panel-actions">
                 <label class="choice">
@@ -84,13 +97,14 @@
                     <th class="checkbox-col"></th>
                     <th>文件</th>
                     <th>大小</th>
+                    <th>规则</th>
                     <th>推断日期</th>
                     <th>建议归档目录</th>
                   </tr>
                 </thead>
                 <tbody id="candidateTable">
                   <tr class="empty-row">
-                    <td colspan="5">还没有分析结果</td>
+                    <td colspan="6">还没有分析结果</td>
                   </tr>
                 </tbody>
               </table>

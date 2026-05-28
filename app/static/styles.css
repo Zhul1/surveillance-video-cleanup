@@ -100,7 +100,7 @@ h1 {
 }
 
 .control-band {
-  grid-template-columns: minmax(320px, 1.5fr) 180px auto;
+  grid-template-columns: minmax(320px, 1.5fr) 180px 180px auto;
   align-items: end;
   padding: 18px;
   border: 1px solid rgba(20, 32, 51, 0.08);
@@ -109,7 +109,8 @@ h1 {
   box-shadow: var(--shadow);
 }
 
-.field-group {
+.field-group,
+.rule-group {
   display: grid;
   gap: 10px;
 }
@@ -129,6 +130,11 @@ select {
   padding: 0 14px;
   background: var(--panel-strong);
   color: var(--text);
+}
+
+input:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .compact-input {
@@ -263,6 +269,10 @@ button.danger {
   font-size: 13px;
 }
 
+.choice.strong {
+  color: var(--text);
+}
+
 .table-shell {
   overflow: auto;
   max-height: 72vh;
@@ -347,6 +357,18 @@ th {
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent);
+  font-size: 12px;
+}
+
+.reason-stack {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.subtle {
+  color: var(--muted);
   font-size: 12px;
 }
 

@@ -1,8 +1,10 @@
 import tempfile
 import unittest
+import shutil
+import subprocess
 from pathlib import Path
 
-from app.server import analyze_folder, delete_selected, organize_folder
+from app.server import analyze_folder, delete_selected, mean_abs_difference, organize_folder
 
 
 class ServerWorkflowTest(unittest.TestCase):
@@ -16,6 +18,54 @@ class ServerWorkflowTest(unittest.TestCase):
 
             self.assertEqual(result["summary"]["candidate_count"], 1)
             self.assertEqual(result["candidates"][0]["path"], str(video))
+            self.assertEqual(result["candidates"][0]["candidate_reasons"], ["size"])
+
+    def test_size_filter_can_be_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            video = base / "2024010100_small.mp4"
+            video.write_bytes(b"x" * 10)
+
+            result = analyze_folder(base, threshold_mb=1.0, use_size_filter=False)
+
+            self.assertEqual(result["summary"]["candidate_count"], 0)
+
+    def test_mean_abs_difference(self):
+        self.assertEqual(mean_abs_difference(bytes([0, 10, 255]), bytes([0, 20, 250])), 5.0)
+
+    @unittest.skipUnless(shutil.which("ffmpeg") and shutil.which("ffprobe"), "ffmpeg and ffprobe are required")
+    def test_static_filter_marks_unchanged_video_as_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            video = base / "2024010100_static.mp4"
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-y",
+                    "-f",
+                    "lavfi",
+                    "-i",
+                    "color=c=black:s=64x64:d=1:r=2",
+                    "-pix_fmt",
+                    "yuv420p",
+                    str(video),
+                ],
+                check=True,
+            )
+
+            result = analyze_folder(
+                base,
+                threshold_mb=0.0001,
+                use_size_filter=False,
+                use_static_filter=True,
+                static_threshold=0.5,
+            )
+
+            self.assertEqual(result["summary"]["candidate_count"], 1)
+            self.assertIn("static", result["candidates"][0]["candidate_reasons"])
+            self.assertLessEqual(result["candidates"][0]["static_score"], 0.5)
 
     def test_organize_moves_to_year_month_day_folder(self):
         with tempfile.TemporaryDirectory() as tmp:

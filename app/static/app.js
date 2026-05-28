@@ -4,7 +4,10 @@ const state = {
 };
 
 const folderInput = document.getElementById("folderInput");
+const sizeFilterEnabled = document.getElementById("sizeFilterEnabled");
 const thresholdInput = document.getElementById("thresholdInput");
+const staticFilterEnabled = document.getElementById("staticFilterEnabled");
+const staticThresholdInput = document.getElementById("staticThresholdInput");
 const analyzeBtn = document.getElementById("analyzeBtn");
 const organizeBtn = document.getElementById("organizeBtn");
 const deleteBtn = document.getElementById("deleteBtn");
@@ -49,6 +52,19 @@ function formatSize(sizeMb) {
   return `${sizeMb.toFixed(3)} MB`;
 }
 
+function formatReasons(item) {
+  const labels = {
+    size: "小文件",
+    static: "静态",
+  };
+  const reasons = item.candidate_reasons || [];
+  const tags = reasons
+    .map((reason) => `<span class="tag">${labels[reason] || escapeHtml(reason)}</span>`)
+    .join("");
+  const staticScore = item.static_score == null ? "" : `<span class="subtle">diff ${item.static_score.toFixed(3)}</span>`;
+  return `<div class="reason-stack">${tags}${staticScore}</div>`;
+}
+
 function updateMetrics(summary) {
   metrics.videos.textContent = summary.video_count;
   metrics.candidates.textContent = summary.candidate_count;
@@ -65,7 +81,7 @@ function renderCandidates(items) {
   if (!items.length) {
     candidateTable.innerHTML = `
       <tr class="empty-row">
-        <td colspan="5">没有命中阈值的视频</td>
+        <td colspan="6">没有命中筛选规则的视频</td>
       </tr>
     `;
     return;
@@ -83,6 +99,7 @@ function renderCandidates(items) {
             </div>
           </td>
           <td><span class="tag">${formatSize(item.size_mb)}</span></td>
+          <td>${formatReasons(item)}</td>
           <td>${escapeHtml(item.inferred_date)}</td>
           <td><span class="mono">${escapeHtml(item.suggested_folder)}</span></td>
         </tr>
@@ -117,6 +134,7 @@ async function checkHealth() {
 async function analyze() {
   const folder = folderInput.value.trim();
   const threshold = Number(thresholdInput.value);
+  const staticThreshold = Number(staticThresholdInput.value);
   if (!folder) {
     addLog("请先输入要处理的视频目录", true);
     return;
@@ -124,7 +142,13 @@ async function analyze() {
 
   analyzeBtn.disabled = true;
   try {
-    const result = await api("/api/analyze", { folder, threshold_mb: threshold });
+    const result = await api("/api/analyze", {
+      folder,
+      threshold_mb: threshold,
+      use_size_filter: sizeFilterEnabled.checked,
+      use_static_filter: staticFilterEnabled.checked,
+      static_threshold: staticThreshold,
+    });
     state.folder = folder;
     updateMetrics(result.summary);
     renderCandidates(result.candidates);
@@ -194,6 +218,12 @@ selectAll.addEventListener("change", (event) => {
   document.querySelectorAll(".candidate-check").forEach((input) => {
     input.checked = event.target.checked;
   });
+});
+sizeFilterEnabled.addEventListener("change", () => {
+  thresholdInput.disabled = !sizeFilterEnabled.checked;
+});
+staticFilterEnabled.addEventListener("change", () => {
+  staticThresholdInput.disabled = !staticFilterEnabled.checked;
 });
 
 checkHealth();

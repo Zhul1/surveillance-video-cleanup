@@ -6,6 +6,7 @@ import mimetypes
 import os
 import re
 import shutil
+import subprocess
 import sys
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -21,6 +22,8 @@ STATIC_DIR = ROOT / "static"
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".m4v"}
 RECYCLE_DIR_NAME = ".nas-video-cleanup-trash"
 IGNORE_DIR_NAMES = {"@eaDir", "#recycle", RECYCLE_DIR_NAME}
+STATIC_FRAME_WIDTH = 96
+STATIC_FRAME_HEIGHT = 54
 DATE_PATTERNS = [
     re.compile(r"(?P<stamp>20\d{8})"),  # YYYYMMDDHH
     re.compile(r"(?P<stamp>20\d{6})"),  # YYYYMMDD
@@ -40,6 +43,9 @@ class VideoEntry:
     suggested_folder: str
     needs_organize: bool
     is_candidate: bool
+    candidate_reasons: list[str]
+    static_score: float | None
+    static_checked: bool
 
 
 def json_response(handler: BaseHTTPRequestHandler, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
@@ -99,7 +105,167 @@ def day_folder_for(base_dir: Path, dt: datetime) -> Path:
     return base_dir / year / month / day
 
 
-def build_entry(base_dir: Path, path: Path, threshold_bytes: int) -> VideoEntry:
+def ffmpeg_tools_available() -> bool:
+    return shutil.which("ffmpeg") is not None and shutil.which("ffprobe") is not None
+
+
+def probe_duration(path: Path) -> float | None:
+    proc = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=10,
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        duration = float(proc.stdout.strip())
+    except ValueError:
+        return None
+    return duration if duration > 0 else None
+
+
+def probe_frame_count(path: Path) -> int | None:
+    proc = subprocess.run(
+        [
+            "ffprobe",
+            "-v",
+            "error",
+            "-select_streams",
+            "v:0",
+            "-count_frames",
+            "-show_entries",
+            "stream=nb_read_frames,nb_frames",
+            "-of",
+            "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=15,
+    )
+    if proc.returncode != 0:
+        return None
+    for line in proc.stdout.splitlines():
+        if line.isdigit():
+            count = int(line)
+            if count > 0:
+                return count
+    return None
+
+
+def frame_filter(prefix: str = "") -> str:
+    scale_filter = (
+        f"scale={STATIC_FRAME_WIDTH}:{STATIC_FRAME_HEIGHT}:force_original_aspect_ratio=decrease,"
+        f"pad={STATIC_FRAME_WIDTH}:{STATIC_FRAME_HEIGHT}:(ow-iw)/2:(oh-ih)/2:color=black,"
+        "format=rgb24"
+    )
+    return f"{prefix}{scale_filter}"
+
+
+def read_frame_from_command(command: list[str]) -> bytes | None:
+    proc = subprocess.run(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=20,
+    )
+    expected_size = STATIC_FRAME_WIDTH * STATIC_FRAME_HEIGHT * 3
+    if proc.returncode != 0 or len(proc.stdout) != expected_size:
+        return None
+    return proc.stdout
+
+
+def read_video_frame_at_time(path: Path, seconds: float) -> bytes | None:
+    return read_frame_from_command(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-ss",
+            f"{max(0.0, seconds):.3f}",
+            "-i",
+            str(path),
+            "-frames:v",
+            "1",
+            "-vf",
+            frame_filter(),
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ]
+    )
+
+
+def read_video_frame_by_number(path: Path, frame_number: int) -> bytes | None:
+    return read_frame_from_command(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-vf",
+            frame_filter(f"select=eq(n\\,{max(0, frame_number)}),"),
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "pipe:1",
+        ]
+    )
+
+
+def read_video_frame(path: Path, seconds: float) -> bytes | None:
+    return read_video_frame_at_time(path, seconds)
+
+
+def read_first_last_frames(path: Path) -> tuple[bytes | None, bytes | None]:
+    frame_count = probe_frame_count(path)
+    if frame_count is not None:
+        return read_video_frame_by_number(path, 0), read_video_frame_by_number(path, frame_count - 1)
+
+    duration = probe_duration(path)
+    if duration is None:
+        return None, None
+    return read_video_frame_at_time(path, 0.0), read_video_frame_at_time(path, max(0.0, duration - 0.5))
+
+
+def mean_abs_difference(left: bytes, right: bytes) -> float:
+    if len(left) != len(right):
+        raise ValueError("frame sizes differ")
+    if not left:
+        return 0.0
+    total = sum(abs(a - b) for a, b in zip(left, right))
+    return total / len(left)
+
+
+def static_frame_score(path: Path) -> float | None:
+    first, last = read_first_last_frames(path)
+    if first is None or last is None:
+        return None
+    return mean_abs_difference(first, last)
+
+
+def build_entry(
+    base_dir: Path,
+    path: Path,
+    threshold_bytes: int,
+    use_size_filter: bool,
+    use_static_filter: bool,
+    static_threshold: float,
+) -> VideoEntry:
     stat = path.stat()
     dt = infer_date_from_path(path)
     target_dir = day_folder_for(base_dir, dt)
@@ -109,6 +275,17 @@ def build_entry(base_dir: Path, path: Path, threshold_bytes: int) -> VideoEntry:
         needs_organize = current_parent != expected_parent
     except OSError:
         needs_organize = True
+    candidate_reasons = []
+    static_score = None
+    static_checked = False
+    if use_size_filter and stat.st_size <= threshold_bytes:
+        candidate_reasons.append("size")
+    if use_static_filter:
+        static_checked = True
+        static_score = static_frame_score(path)
+        if static_score is not None and static_score <= static_threshold:
+            candidate_reasons.append("static")
+
     return VideoEntry(
         path=str(path),
         size_bytes=stat.st_size,
@@ -120,7 +297,10 @@ def build_entry(base_dir: Path, path: Path, threshold_bytes: int) -> VideoEntry:
         day=dt.strftime("%Y%m%d"),
         suggested_folder=str(target_dir),
         needs_organize=needs_organize,
-        is_candidate=stat.st_size <= threshold_bytes,
+        is_candidate=bool(candidate_reasons),
+        candidate_reasons=candidate_reasons,
+        static_score=round(static_score, 3) if static_score is not None else None,
+        static_checked=static_checked,
     )
 
 
@@ -138,9 +318,27 @@ def unique_destination(path: Path) -> Path:
         index += 1
 
 
-def analyze_folder(base_dir: Path, threshold_mb: float) -> dict:
+def analyze_folder(
+    base_dir: Path,
+    threshold_mb: float,
+    use_size_filter: bool = True,
+    use_static_filter: bool = False,
+    static_threshold: float = 2.0,
+) -> dict:
     threshold_bytes = int(threshold_mb * 1024 * 1024)
-    entries = [build_entry(base_dir, path, threshold_bytes) for path in iter_videos(base_dir)]
+    if use_static_filter and not ffmpeg_tools_available():
+        raise ValueError("首尾帧检测需要安装 ffmpeg 和 ffprobe")
+    entries = [
+        build_entry(
+            base_dir,
+            path,
+            threshold_bytes,
+            use_size_filter,
+            use_static_filter,
+            static_threshold,
+        )
+        for path in iter_videos(base_dir)
+    ]
     entries.sort(key=lambda item: item.path)
     candidates = [asdict(entry) for entry in entries if entry.is_candidate]
     organize_count = sum(1 for entry in entries if entry.needs_organize)
@@ -148,6 +346,9 @@ def analyze_folder(base_dir: Path, threshold_mb: float) -> dict:
     return {
         "folder": str(base_dir),
         "threshold_mb": threshold_mb,
+        "use_size_filter": use_size_filter,
+        "use_static_filter": use_static_filter,
+        "static_threshold": static_threshold,
         "summary": {
             "video_count": len(entries),
             "candidate_count": len(candidates),
@@ -224,9 +425,23 @@ class AppHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/analyze":
                 base_dir = sanitize_folder(payload.get("folder", ""))
                 threshold_mb = float(payload.get("threshold_mb", 1.0))
+                use_size_filter = bool(payload.get("use_size_filter", True))
+                use_static_filter = bool(payload.get("use_static_filter", False))
+                static_threshold = float(payload.get("static_threshold", 2.0))
                 if threshold_mb <= 0:
                     raise ValueError("阈值必须大于 0")
-                json_response(self, analyze_folder(base_dir, threshold_mb))
+                if static_threshold < 0:
+                    raise ValueError("静态差异阈值不能小于 0")
+                json_response(
+                    self,
+                    analyze_folder(
+                        base_dir,
+                        threshold_mb,
+                        use_size_filter=use_size_filter,
+                        use_static_filter=use_static_filter,
+                        static_threshold=static_threshold,
+                    ),
+                )
                 return
 
             if parsed.path == "/api/organize":
