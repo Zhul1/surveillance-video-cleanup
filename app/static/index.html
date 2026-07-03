@@ -7,9 +7,29 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <div class="shell">
+    <div class="app-shell">
+      <aside class="nav-rail">
+        <div class="brand-lockup">
+          <span class="brand-mark">NVC</span>
+          <div>
+            <strong>NAS Video Cleanup</strong>
+            <span data-i18n="nav.subtitle">本地整理工具</span>
+          </div>
+        </div>
+        <nav class="rail-nav" aria-label="Workspace">
+          <a href="#source" data-i18n="nav.source">目录与规则</a>
+          <a href="#results" data-i18n="nav.results">候选审核</a>
+          <a href="#activity" data-i18n="nav.activity">操作记录</a>
+        </nav>
+        <div class="rail-note">
+          <span data-i18n="nav.modeLabel">默认模式</span>
+          <strong data-i18n="nav.safeMode">先回收后删除</strong>
+        </div>
+      </aside>
+
+      <div class="shell">
       <header class="topbar">
-        <div>
+        <div class="topbar-title">
           <p class="eyebrow">NAS Video Cleanup</p>
           <h1 data-i18n="app.title">监控视频整理台</h1>
         </div>
@@ -24,7 +44,7 @@
       </header>
 
       <main class="workspace">
-        <section class="control-band">
+        <section class="control-band" id="source">
           <div class="field-group folder-field">
             <label for="folderInput" data-i18n="field.folder">视频目录</label>
             <div class="folder-input-row">
@@ -157,7 +177,7 @@
           </div>
         </section>
 
-        <section class="content-band">
+        <section class="content-band" id="results">
           <div class="panel panel-wide">
             <div class="panel-head">
               <div>
@@ -199,7 +219,7 @@
             </div>
           </div>
 
-          <aside class="panel side-panel">
+          <aside class="panel side-panel" id="activity">
             <div class="panel-head">
               <div>
                 <h2 data-i18n="panel.logTitle">操作记录</h2>
@@ -212,6 +232,7 @@
           </aside>
         </section>
       </main>
+      </div>
     </div>
     <script src="/app.js"></script>
   </body>
