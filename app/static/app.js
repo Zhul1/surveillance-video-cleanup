@@ -59,6 +59,11 @@ const translations = {
     "nav.activity": "操作记录",
     "nav.modeLabel": "默认模式",
     "nav.safeMode": "先回收后删除",
+    "section.scanTitle": "清理任务",
+    "section.scanSubtitle": "先分析候选，再回收处理。",
+    "section.policy": "策略",
+    "section.rules": "筛选规则",
+    "section.scope": "范围",
     "field.folder": "视频目录",
     "field.folderPlaceholder": "/Volumes/NAS/监控视频/卧室",
     "field.policy": "清理策略",
@@ -165,6 +170,11 @@ const translations = {
     "nav.activity": "Activity",
     "nav.modeLabel": "Default mode",
     "nav.safeMode": "Recycle before delete",
+    "section.scanTitle": "Cleanup Job",
+    "section.scanSubtitle": "Analyze candidates before moving anything.",
+    "section.policy": "Policy",
+    "section.rules": "Filters",
+    "section.scope": "Scope",
     "field.folder": "Video Folder",
     "field.folderPlaceholder": "/Volumes/NAS/Surveillance/Bedroom",
     "field.policy": "Cleanup Policy",
@@ -546,6 +556,7 @@ function updateActionState() {
   protectedKeywordsInput.disabled = busy;
   organizeGranularity.disabled = busy;
   policyPreset.disabled = busy;
+  deleteBtn.classList.toggle("hard-delete", deleteMode.value === "delete");
 }
 
 function setBusy(isBusy) {
@@ -890,6 +901,7 @@ pauseAnalyzeBtn.addEventListener("click", () => {
 stopAnalyzeBtn.addEventListener("click", () => controlAnalyze("stop"));
 organizeBtn.addEventListener("click", organize);
 deleteBtn.addEventListener("click", deleteSelected);
+deleteMode.addEventListener("change", updateActionState);
 selectAll.addEventListener("change", (event) => {
   document.querySelectorAll(".candidate-check").forEach((input) => {
     input.checked = event.target.checked;

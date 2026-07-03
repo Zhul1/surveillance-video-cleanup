@@ -8,43 +8,37 @@
   </head>
   <body>
     <div class="app-shell">
-      <aside class="nav-rail">
-        <div class="brand-lockup">
-          <span class="brand-mark">NVC</span>
-          <div>
-            <strong>NAS Video Cleanup</strong>
-            <span data-i18n="nav.subtitle">本地整理工具</span>
-          </div>
-        </div>
-        <nav class="rail-nav" aria-label="Workspace">
-          <a href="#source" data-i18n="nav.source">目录与规则</a>
-          <a href="#results" data-i18n="nav.results">候选审核</a>
-          <a href="#activity" data-i18n="nav.activity">操作记录</a>
-        </nav>
-        <div class="rail-note">
-          <span data-i18n="nav.modeLabel">默认模式</span>
-          <strong data-i18n="nav.safeMode">先回收后删除</strong>
-        </div>
-      </aside>
-
       <div class="shell">
-      <header class="topbar">
-        <div class="topbar-title">
-          <p class="eyebrow">NAS Video Cleanup</p>
-          <h1 data-i18n="app.title">监控视频整理台</h1>
-        </div>
-        <div class="topbar-actions">
-          <select id="languageSelect" class="language-select" aria-label="Language">
-            <option value="zh">中文</option>
-            <option value="en">English</option>
-          </select>
-          <span class="status-dot" id="healthDot"></span>
-          <span id="healthText" data-i18n="health.checking">本地服务检测中</span>
-        </div>
-      </header>
+        <header class="topbar">
+          <div class="brand-lockup">
+            <span class="brand-mark">NVC</span>
+            <div class="topbar-title">
+              <p class="eyebrow">NAS Video Cleanup</p>
+              <h1 data-i18n="app.title">监控视频整理台</h1>
+            </div>
+          </div>
+          <div class="topbar-actions">
+            <select id="languageSelect" class="language-select" aria-label="Language">
+              <option value="zh">中文</option>
+              <option value="en">English</option>
+            </select>
+            <span class="status-dot" id="healthDot"></span>
+            <span id="healthText" data-i18n="health.checking">本地服务检测中</span>
+          </div>
+        </header>
 
       <main class="workspace">
         <section class="control-band" id="source">
+          <div class="control-head">
+            <div>
+              <h2 data-i18n="section.scanTitle">清理任务</h2>
+              <p data-i18n="section.scanSubtitle">先分析候选，再回收处理。</p>
+            </div>
+            <div class="mode-badge">
+              <span data-i18n="nav.modeLabel">默认模式</span>
+              <strong data-i18n="nav.safeMode">先回收后删除</strong>
+            </div>
+          </div>
           <div class="field-group folder-field">
             <label for="folderInput" data-i18n="field.folder">视频目录</label>
             <div class="folder-input-row">
@@ -53,71 +47,85 @@
               <button id="openFolderBtn" type="button" disabled data-i18n="button.openFolder">打开目录</button>
             </div>
           </div>
-          <div class="field-group">
-            <label for="policyPreset" data-i18n="field.policy">清理策略</label>
-            <select id="policyPreset">
-              <option value="balanced" data-i18n="preset.balanced">均衡清理</option>
-              <option value="careful" data-i18n="preset.careful">家庭谨慎</option>
-              <option value="storage" data-i18n="preset.storage">空间优先</option>
-              <option value="archive" data-i18n="preset.archive">只归档整理</option>
-              <option value="custom" data-i18n="preset.custom">自定义</option>
-            </select>
-          </div>
-          <div class="rule-group">
-            <label class="choice strong">
-              <input id="sizeFilterEnabled" type="checkbox" checked />
-              <span data-i18n="rule.size">按大小筛选</span>
-            </label>
-            <div class="compact-input">
-              <input id="thresholdInput" type="number" min="0.1" step="0.1" value="1.0" />
-              <span>MB</span>
-            </div>
-          </div>
-          <div class="rule-group">
-            <label class="choice strong">
-              <input id="emptyFilterEnabled" type="checkbox" checked />
-              <span data-i18n="rule.empty">空文件</span>
-            </label>
-            <div class="hint-pill" data-i18n="rule.emptyHint">0 B / 录制失败</div>
-          </div>
-          <div class="rule-group">
-            <label class="choice strong">
-              <input id="retentionFilterEnabled" type="checkbox" />
-              <span data-i18n="rule.retention">超过保留期</span>
-            </label>
-            <div class="compact-input">
-              <input id="retentionDaysInput" type="number" min="1" step="1" value="180" disabled />
-              <span data-i18n="unit.days">天</span>
-            </div>
-          </div>
-          <div class="rule-group">
-            <label class="choice strong">
-              <input id="staticFilterEnabled" type="checkbox" />
-              <span data-i18n="rule.static">首尾帧一致</span>
-            </label>
-            <div class="compact-input">
-              <input id="staticThresholdInput" type="number" min="0" step="0.1" value="2.0" disabled />
-              <span>diff</span>
-            </div>
-          </div>
-          <div class="field-group">
-            <label for="organizeGranularity" data-i18n="field.granularity">整理粒度</label>
-            <select id="organizeGranularity">
-              <option value="day" data-i18n="granularity.day">按日归档</option>
-              <option value="month" data-i18n="granularity.month">按月归档</option>
-            </select>
-          </div>
-          <div class="field-group wide-field">
-            <label for="extensionInput" data-i18n="field.extensions">视频格式</label>
-            <input id="extensionInput" type="text" />
-          </div>
-          <div class="field-group wide-field">
-            <label for="protectedKeywordsInput" data-i18n="field.protectedKeywords">保护关键词</label>
-            <input id="protectedKeywordsInput" type="text" />
-          </div>
           <div class="action-strip">
             <button id="analyzeBtn" class="primary" data-i18n="button.analyze">分析目录</button>
             <button id="organizeBtn" data-i18n="button.organize">按年月日整理</button>
+          </div>
+
+          <div class="settings-grid">
+            <div class="settings-card">
+              <div class="settings-title" data-i18n="section.policy">策略</div>
+              <div class="field-group">
+                <label for="policyPreset" data-i18n="field.policy">清理策略</label>
+                <select id="policyPreset">
+                  <option value="balanced" data-i18n="preset.balanced">均衡清理</option>
+                  <option value="careful" data-i18n="preset.careful">家庭谨慎</option>
+                  <option value="storage" data-i18n="preset.storage">空间优先</option>
+                  <option value="archive" data-i18n="preset.archive">只归档整理</option>
+                  <option value="custom" data-i18n="preset.custom">自定义</option>
+                </select>
+              </div>
+              <div class="field-group">
+                <label for="organizeGranularity" data-i18n="field.granularity">整理粒度</label>
+                <select id="organizeGranularity">
+                  <option value="day" data-i18n="granularity.day">按日归档</option>
+                  <option value="month" data-i18n="granularity.month">按月归档</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="settings-card settings-card-wide">
+              <div class="settings-title" data-i18n="section.rules">筛选规则</div>
+              <div class="rule-row">
+                <label class="choice strong">
+                  <input id="sizeFilterEnabled" type="checkbox" checked />
+                  <span data-i18n="rule.size">按大小筛选</span>
+                </label>
+                <div class="compact-input">
+                  <input id="thresholdInput" type="number" min="0.1" step="0.1" value="1.0" />
+                  <span>MB</span>
+                </div>
+              </div>
+              <div class="rule-row">
+                <label class="choice strong">
+                  <input id="emptyFilterEnabled" type="checkbox" checked />
+                  <span data-i18n="rule.empty">空文件</span>
+                </label>
+                <div class="hint-pill" data-i18n="rule.emptyHint">0 B / 录制失败</div>
+              </div>
+              <div class="rule-row">
+                <label class="choice strong">
+                  <input id="retentionFilterEnabled" type="checkbox" />
+                  <span data-i18n="rule.retention">超过保留期</span>
+                </label>
+                <div class="compact-input">
+                  <input id="retentionDaysInput" type="number" min="1" step="1" value="180" disabled />
+                  <span data-i18n="unit.days">天</span>
+                </div>
+              </div>
+              <div class="rule-row">
+                <label class="choice strong">
+                  <input id="staticFilterEnabled" type="checkbox" />
+                  <span data-i18n="rule.static">首尾帧一致</span>
+                </label>
+                <div class="compact-input">
+                  <input id="staticThresholdInput" type="number" min="0" step="0.1" value="2.0" disabled />
+                  <span>diff</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="settings-card settings-card-wide">
+              <div class="settings-title" data-i18n="section.scope">范围</div>
+              <div class="field-group">
+                <label for="extensionInput" data-i18n="field.extensions">视频格式</label>
+                <textarea id="extensionInput" rows="2"></textarea>
+              </div>
+              <div class="field-group">
+                <label for="protectedKeywordsInput" data-i18n="field.protectedKeywords">保护关键词</label>
+                <textarea id="protectedKeywordsInput" rows="2"></textarea>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -151,27 +159,27 @@
         </section>
 
         <section class="stats-band" id="statsBand">
-          <div class="metric">
+          <div class="metric metric-total">
             <span class="metric-label" data-i18n="metric.videos">视频总数</span>
             <strong id="metricVideos">-</strong>
           </div>
-          <div class="metric">
+          <div class="metric metric-candidates">
             <span class="metric-label" data-i18n="metric.candidates">候选删除</span>
             <strong id="metricCandidates">-</strong>
           </div>
-          <div class="metric">
+          <div class="metric metric-organize">
             <span class="metric-label" data-i18n="metric.organize">待整理文件</span>
             <strong id="metricOrganize">-</strong>
           </div>
-          <div class="metric">
+          <div class="metric metric-size">
             <span class="metric-label" data-i18n="metric.candidateSize">候选体积</span>
             <strong id="metricCandidateSize">-</strong>
           </div>
-          <div class="metric">
+          <div class="metric metric-protected">
             <span class="metric-label" data-i18n="metric.protected">受保护</span>
             <strong id="metricProtected">-</strong>
           </div>
-          <div class="metric">
+          <div class="metric metric-formats">
             <span class="metric-label" data-i18n="metric.formats">格式种类</span>
             <strong id="metricFormats">-</strong>
           </div>
@@ -199,6 +207,15 @@
 
             <div class="table-shell">
               <table>
+                <colgroup>
+                  <col class="col-check" />
+                  <col class="col-file" />
+                  <col class="col-device" />
+                  <col class="col-size" />
+                  <col class="col-rule" />
+                  <col class="col-date" />
+                  <col class="col-folder" />
+                </colgroup>
                 <thead>
                   <tr>
                     <th class="checkbox-col"></th>
