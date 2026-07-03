@@ -11,28 +11,42 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">NAS Video Cleanup</p>
-          <h1>监控视频整理台</h1>
+          <h1 data-i18n="app.title">监控视频整理台</h1>
         </div>
         <div class="topbar-actions">
+          <select id="languageSelect" class="language-select" aria-label="Language">
+            <option value="zh">中文</option>
+            <option value="en">English</option>
+          </select>
           <span class="status-dot" id="healthDot"></span>
-          <span id="healthText">本地服务检测中</span>
+          <span id="healthText" data-i18n="health.checking">本地服务检测中</span>
         </div>
       </header>
 
       <main class="workspace">
         <section class="control-band">
           <div class="field-group folder-field">
-            <label for="folderInput">视频目录</label>
+            <label for="folderInput" data-i18n="field.folder">视频目录</label>
             <div class="folder-input-row">
-              <input id="folderInput" type="text" placeholder="/Volumes/NAS/监控视频/卧室" />
-              <button id="browseBtn" type="button">选择目录</button>
-              <button id="openFolderBtn" type="button" disabled>打开目录</button>
+              <input id="folderInput" type="text" placeholder="/Volumes/NAS/监控视频/卧室" data-i18n-placeholder="field.folderPlaceholder" />
+              <button id="browseBtn" type="button" data-i18n="button.browse">选择目录</button>
+              <button id="openFolderBtn" type="button" disabled data-i18n="button.openFolder">打开目录</button>
             </div>
+          </div>
+          <div class="field-group">
+            <label for="policyPreset" data-i18n="field.policy">清理策略</label>
+            <select id="policyPreset">
+              <option value="balanced" data-i18n="preset.balanced">均衡清理</option>
+              <option value="careful" data-i18n="preset.careful">家庭谨慎</option>
+              <option value="storage" data-i18n="preset.storage">空间优先</option>
+              <option value="archive" data-i18n="preset.archive">只归档整理</option>
+              <option value="custom" data-i18n="preset.custom">自定义</option>
+            </select>
           </div>
           <div class="rule-group">
             <label class="choice strong">
               <input id="sizeFilterEnabled" type="checkbox" checked />
-              <span>按大小筛选</span>
+              <span data-i18n="rule.size">按大小筛选</span>
             </label>
             <div class="compact-input">
               <input id="thresholdInput" type="number" min="0.1" step="0.1" value="1.0" />
@@ -41,65 +55,105 @@
           </div>
           <div class="rule-group">
             <label class="choice strong">
+              <input id="emptyFilterEnabled" type="checkbox" checked />
+              <span data-i18n="rule.empty">空文件</span>
+            </label>
+            <div class="hint-pill" data-i18n="rule.emptyHint">0 B / 录制失败</div>
+          </div>
+          <div class="rule-group">
+            <label class="choice strong">
+              <input id="retentionFilterEnabled" type="checkbox" />
+              <span data-i18n="rule.retention">超过保留期</span>
+            </label>
+            <div class="compact-input">
+              <input id="retentionDaysInput" type="number" min="1" step="1" value="180" disabled />
+              <span data-i18n="unit.days">天</span>
+            </div>
+          </div>
+          <div class="rule-group">
+            <label class="choice strong">
               <input id="staticFilterEnabled" type="checkbox" />
-              <span>首尾帧一致</span>
+              <span data-i18n="rule.static">首尾帧一致</span>
             </label>
             <div class="compact-input">
               <input id="staticThresholdInput" type="number" min="0" step="0.1" value="2.0" disabled />
               <span>diff</span>
             </div>
           </div>
+          <div class="field-group">
+            <label for="organizeGranularity" data-i18n="field.granularity">整理粒度</label>
+            <select id="organizeGranularity">
+              <option value="day" data-i18n="granularity.day">按日归档</option>
+              <option value="month" data-i18n="granularity.month">按月归档</option>
+            </select>
+          </div>
+          <div class="field-group wide-field">
+            <label for="extensionInput" data-i18n="field.extensions">视频格式</label>
+            <input id="extensionInput" type="text" />
+          </div>
+          <div class="field-group wide-field">
+            <label for="protectedKeywordsInput" data-i18n="field.protectedKeywords">保护关键词</label>
+            <input id="protectedKeywordsInput" type="text" />
+          </div>
           <div class="action-strip">
-            <button id="analyzeBtn" class="primary">分析目录</button>
-            <button id="organizeBtn">按年月日整理</button>
+            <button id="analyzeBtn" class="primary" data-i18n="button.analyze">分析目录</button>
+            <button id="organizeBtn" data-i18n="button.organize">按年月日整理</button>
           </div>
         </section>
 
         <section class="progress-band" id="progressBand" hidden>
           <div class="progress-head">
-            <span id="progressTitle">准备分析</span>
+            <span id="progressTitle" data-i18n="progress.ready">准备分析</span>
             <span id="progressTime">0 秒</span>
           </div>
           <div class="progress-actions">
-            <button id="pauseAnalyzeBtn" type="button" disabled>暂停</button>
-            <button id="stopAnalyzeBtn" type="button" class="danger" disabled>停止</button>
+            <button id="pauseAnalyzeBtn" type="button" disabled data-i18n="button.pause">暂停</button>
+            <button id="stopAnalyzeBtn" type="button" class="danger" disabled data-i18n="button.stop">停止</button>
           </div>
           <div class="progress-track">
             <span id="progressBar"></span>
           </div>
           <div class="progress-grid">
             <div>
-              <span>已分析</span>
+              <span data-i18n="progress.processed">已分析</span>
               <strong id="progressProcessed">0</strong>
             </div>
             <div>
-              <span>剩余</span>
+              <span data-i18n="progress.remaining">剩余</span>
               <strong id="progressRemaining">0</strong>
             </div>
             <div>
-              <span>候选</span>
+              <span data-i18n="progress.candidates">候选</span>
               <strong id="progressCandidates">0</strong>
             </div>
           </div>
-          <div class="progress-file" id="progressFile">等待开始</div>
+          <div class="progress-file" id="progressFile" data-i18n="progress.waitingStart">等待开始</div>
         </section>
 
         <section class="stats-band" id="statsBand">
           <div class="metric">
-            <span class="metric-label">视频总数</span>
+            <span class="metric-label" data-i18n="metric.videos">视频总数</span>
             <strong id="metricVideos">-</strong>
           </div>
           <div class="metric">
-            <span class="metric-label">候选删除</span>
+            <span class="metric-label" data-i18n="metric.candidates">候选删除</span>
             <strong id="metricCandidates">-</strong>
           </div>
           <div class="metric">
-            <span class="metric-label">待整理文件</span>
+            <span class="metric-label" data-i18n="metric.organize">待整理文件</span>
             <strong id="metricOrganize">-</strong>
           </div>
           <div class="metric">
-            <span class="metric-label">候选体积</span>
+            <span class="metric-label" data-i18n="metric.candidateSize">候选体积</span>
             <strong id="metricCandidateSize">-</strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label" data-i18n="metric.protected">受保护</span>
+            <strong id="metricProtected">-</strong>
+          </div>
+          <div class="metric">
+            <span class="metric-label" data-i18n="metric.formats">格式种类</span>
+            <strong id="metricFormats">-</strong>
           </div>
         </section>
 
@@ -107,19 +161,19 @@
           <div class="panel panel-wide">
             <div class="panel-head">
               <div>
-                <h2>候选视频</h2>
-                <p>命中筛选规则的视频会先列在这里，由你决定后续处理。</p>
+                <h2 data-i18n="panel.candidatesTitle">候选视频</h2>
+                <p data-i18n="panel.candidatesDesc">命中筛选规则的视频会先列在这里，由你决定后续处理。</p>
               </div>
               <div class="panel-actions">
                 <label class="choice">
                   <input id="selectAll" type="checkbox" />
-                  <span>全选当前列表</span>
+                  <span data-i18n="action.selectAll">全选当前列表</span>
                 </label>
                 <select id="deleteMode">
-                  <option value="recycle">移动到回收目录</option>
-                  <option value="delete">永久删除</option>
+                  <option value="recycle" data-i18n="deleteMode.recycle">移动到回收目录</option>
+                  <option value="delete" data-i18n="deleteMode.delete">永久删除</option>
                 </select>
-                <button id="deleteBtn" class="danger">处理选中项</button>
+                <button id="deleteBtn" class="danger" data-i18n="button.processSelected">处理选中项</button>
               </div>
             </div>
 
@@ -128,16 +182,17 @@
                 <thead>
                   <tr>
                     <th class="checkbox-col"></th>
-                    <th>文件</th>
-                    <th>大小</th>
-                    <th>规则</th>
-                    <th>推断日期</th>
-                    <th>建议归档目录</th>
+                    <th data-i18n="table.file">文件</th>
+                    <th data-i18n="table.formatDevice">格式/设备</th>
+                    <th data-i18n="table.size">大小</th>
+                    <th data-i18n="table.rule">规则</th>
+                    <th data-i18n="table.date">推断日期</th>
+                    <th data-i18n="table.suggestedFolder">建议归档目录</th>
                   </tr>
                 </thead>
                 <tbody id="candidateTable">
                   <tr class="empty-row">
-                    <td colspan="6">还没有分析结果</td>
+                    <td colspan="7" data-i18n="table.initial">还没有分析结果</td>
                   </tr>
                 </tbody>
               </table>
@@ -147,12 +202,12 @@
           <aside class="panel side-panel">
             <div class="panel-head">
               <div>
-                <h2>操作记录</h2>
-                <p>每次整理、分析、删除都会留下简要回执。</p>
+                <h2 data-i18n="panel.logTitle">操作记录</h2>
+                <p data-i18n="panel.logDesc">每次整理、分析、删除都会留下简要回执。</p>
               </div>
             </div>
             <div class="log-list" id="logList">
-              <div class="log-item muted">等待操作</div>
+              <div class="log-item muted" data-i18n="log.waiting">等待操作</div>
             </div>
           </aside>
         </section>

@@ -6,12 +6,20 @@ set -eu
 
 SIZE_THRESHOLD_BYTES="${SIZE_THRESHOLD_BYTES:-734003}"
 LABEL="${LABEL:-size_based_move}"
+DRY_RUN="${DRY_RUN:-0}"
 
-echo "BEGIN	$LABEL	$SOURCE_BASE	$TRASH_BASE	$SIZE_THRESHOLD_BYTES"
+echo "BEGIN	$LABEL	$SOURCE_BASE	$TRASH_BASE	$SIZE_THRESHOLD_BYTES	dry_run=$DRY_RUN"
 count=0
 
 find "$SOURCE_BASE" \( -path "*/@eaDir/*" -o -path "*/#recycle/*" \) -prune -o \
-  -type f -iname "*.mp4" -exec sh -c '
+  -type f \( \
+    -iname "*.3g2" -o -iname "*.3gp" -o -iname "*.264" -o -iname "*.asf" -o \
+    -iname "*.avi" -o -iname "*.dav" -o -iname "*.flv" -o -iname "*.h264" -o \
+    -iname "*.h265" -o -iname "*.hevc" -o -iname "*.m2ts" -o -iname "*.m4v" -o \
+    -iname "*.mjpeg" -o -iname "*.mjpg" -o -iname "*.mkv" -o -iname "*.mov" -o \
+    -iname "*.mp4" -o -iname "*.mpeg" -o -iname "*.mpg" -o -iname "*.mts" -o \
+    -iname "*.ts" -o -iname "*.vob" -o -iname "*.webm" \
+  \) -exec sh -c '
     threshold=$1
     shift
     for src do
@@ -43,6 +51,9 @@ while IFS="	" read -r size src; do
     elif [ "$actual" -gt "$SIZE_THRESHOLD_BYTES" ]; then
       status="skip_over_threshold"
       msg="actual=$actual"
+    elif [ "$DRY_RUN" = "1" ]; then
+      status="dry_run"
+      msg="dry_run=1"
     else
       mkdir -p "${dst%/*}"
       if mv -n "$src" "$dst"; then
@@ -52,6 +63,10 @@ while IFS="	" read -r size src; do
         msg="mv_failed"
       fi
     fi
+  fi
+
+  if [ "$DRY_RUN" = "1" ] && [ "$status" != "dry_run" ]; then
+    continue
   fi
 
   printf "%s\t%s\t%s\t%s\t%s\t%s\n" "$status" "$LABEL" "$size" "$src" "$dst" "$msg"

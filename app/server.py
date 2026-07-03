@@ -13,7 +13,7 @@ import threading
 import time
 import uuid
 from dataclasses import asdict, dataclass
-from datetime import datetime
+from datetime import datetime, timedelta
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -23,17 +23,97 @@ from urllib.parse import urlparse
 
 ROOT = Path(__file__).resolve().parent
 STATIC_DIR = ROOT / "static"
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".m4v"}
+VIDEO_EXTENSIONS = {
+    ".3g2",
+    ".3gp",
+    ".264",
+    ".asf",
+    ".avi",
+    ".dav",
+    ".flv",
+    ".h264",
+    ".h265",
+    ".hevc",
+    ".m2ts",
+    ".m4v",
+    ".mjpeg",
+    ".mjpg",
+    ".mkv",
+    ".mov",
+    ".mp4",
+    ".mpeg",
+    ".mpg",
+    ".mts",
+    ".ts",
+    ".vob",
+    ".webm",
+}
 RECYCLE_DIR_NAME = ".nas-video-cleanup-trash"
 IGNORE_DIR_NAMES = {"@eaDir", "#recycle", RECYCLE_DIR_NAME}
 STATIC_FRAME_WIDTH = 96
 STATIC_FRAME_HEIGHT = 54
-DATE_PATTERNS = [
-    re.compile(r"(?P<stamp>20\d{8})"),  # YYYYMMDDHH
-    re.compile(r"(?P<stamp>20\d{6})"),  # YYYYMMDD
+DATE_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"(?<!\d)(?P<stamp>20\d{12})(?!\d)"), "%Y%m%d%H%M%S"),
+    (re.compile(r"(?<!\d)(?P<stamp>20\d{10})(?!\d)"), "%Y%m%d%H%M"),
+    (re.compile(r"(?<!\d)(?P<stamp>20\d{8})(?!\d)"), "%Y%m%d%H"),
+    (re.compile(r"(?<!\d)(?P<stamp>20\d{6})(?!\d)"), "%Y%m%d"),
 ]
+SEPARATED_DATE_PATTERN = re.compile(
+    r"(?<!\d)"
+    r"(?P<year>20\d{2})[./_\- ]"
+    r"(?P<month>0[1-9]|1[0-2])[./_\- ]"
+    r"(?P<day>0[1-9]|[12]\d|3[01])"
+    r"(?:[ T_@\-]+(?P<hour>[01]\d|2[0-3])"
+    r"(?::|\.|_|-)?(?P<minute>[0-5]\d)?"
+    r"(?::|\.|_|-)?(?P<second>[0-5]\d)?)?"
+    r"(?!\d)"
+)
+DEFAULT_PROTECTED_KEYWORDS = [
+    "alarm",
+    "event",
+    "favorite",
+    "human",
+    "lock",
+    "motion",
+    "people",
+    "person",
+    "保留",
+    "报警",
+    "告警",
+    "人形",
+    "事件",
+    "移动侦测",
+    "重要",
+]
+DEVICE_SIGNATURES = {
+    "Hikvision": ["hikvision", "海康", "ds-", "ch01"],
+    "Dahua": ["dahua", "大华", ".dav"],
+    "Uniview": ["uniview", "宇视"],
+    "Reolink": ["reolink"],
+    "EZVIZ": ["ezviz", "萤石"],
+    "TP-Link/Tapo": ["tapo", "tplink", "tp-link"],
+    "Eufy": ["eufy"],
+    "Xiaomi/Mijia": ["xiaomi", "mijia", "米家", "小米"],
+    "Ring": ["ring"],
+    "Wyze": ["wyze"],
+}
+ORGANIZE_GRANULARITIES = {"day", "month"}
 ANALYZE_JOBS: dict[str, dict] = {}
 ANALYZE_JOBS_LOCK = threading.Lock()
+
+
+@dataclass(frozen=True)
+class CleanupOptions:
+    threshold_mb: float = 1.0
+    use_size_filter: bool = True
+    use_empty_filter: bool = True
+    use_retention_filter: bool = False
+    retention_days: int = 180
+    use_static_filter: bool = False
+    static_threshold: float = 2.0
+    protected_keywords: list[str] | None = None
+    extensions: set[str] | None = None
+    organize_granularity: str = "day"
 
 
 @dataclass
@@ -41,6 +121,9 @@ class VideoEntry:
     path: str
     size_bytes: int
     size_mb: float
+    extension: str
+    device_hint: str
+    age_days: int
     modified_at: str
     inferred_date: str
     year: str
@@ -48,6 +131,8 @@ class VideoEntry:
     day: str
     suggested_folder: str
     needs_organize: bool
+    is_protected: bool
+    protect_reasons: list[str]
     is_candidate: bool
     candidate_reasons: list[str]
     static_score: float | None
@@ -110,40 +195,127 @@ def open_folder(raw_path: str) -> dict:
     return {"opened": str(folder)}
 
 
-def iter_videos(base_dir: Path) -> Iterable[Path]:
+def normalize_extensions(raw_extensions: object | None = None) -> set[str]:
+    if raw_extensions is None:
+        return set(VIDEO_EXTENSIONS)
+    if isinstance(raw_extensions, str):
+        chunks = re.split(r"[\s,;，；]+", raw_extensions)
+    elif isinstance(raw_extensions, list):
+        chunks = [str(item) for item in raw_extensions]
+    else:
+        raise ValueError("视频格式列表无效")
+    extensions = set()
+    for chunk in chunks:
+        item = chunk.strip().lower()
+        if not item:
+            continue
+        if not item.startswith("."):
+            item = f".{item}"
+        if not re.fullmatch(r"\.[a-z0-9]+", item):
+            raise ValueError(f"视频格式无效: {chunk}")
+        extensions.add(item)
+    if not extensions:
+        raise ValueError("至少保留一种视频格式")
+    return extensions
+
+
+def normalize_keywords(raw_keywords: object | None) -> list[str]:
+    if raw_keywords is None:
+        return list(DEFAULT_PROTECTED_KEYWORDS)
+    if isinstance(raw_keywords, str):
+        chunks = re.split(r"[\n,;，；]+", raw_keywords)
+    elif isinstance(raw_keywords, list):
+        chunks = [str(item) for item in raw_keywords]
+    else:
+        raise ValueError("保护关键词格式无效")
+    keywords = []
+    seen = set()
+    for chunk in chunks:
+        item = chunk.strip()
+        key = item.casefold()
+        if item and key not in seen:
+            keywords.append(item)
+            seen.add(key)
+    return keywords
+
+
+def default_cleanup_options(**overrides) -> CleanupOptions:
+    data = {
+        "protected_keywords": list(DEFAULT_PROTECTED_KEYWORDS),
+        "extensions": set(VIDEO_EXTENSIONS),
+    }
+    data.update(overrides)
+    return CleanupOptions(**data)
+
+
+def iter_videos(base_dir: Path, extensions: set[str] | None = None) -> Iterable[Path]:
+    allowed_extensions = extensions or VIDEO_EXTENSIONS
     for root, dirnames, filenames in os.walk(base_dir):
         dirnames[:] = [name for name in dirnames if name not in IGNORE_DIR_NAMES]
         root_path = Path(root)
         for filename in filenames:
             path = root_path / filename
-            if path.suffix.lower() in VIDEO_EXTENSIONS:
+            if path.suffix.lower() in allowed_extensions:
                 yield path
 
 
-def infer_date_from_path(path: Path) -> datetime:
-    candidates = list(path.parts[::-1])
-    candidates.append(path.name)
-    for chunk in candidates:
-        for pattern in DATE_PATTERNS:
-            match = pattern.search(chunk)
-            if not match:
-                continue
-            stamp = match.group("stamp")
+def parse_datetime_from_text(text: str) -> datetime | None:
+    for pattern, fmt in DATE_PATTERNS:
+        for match in pattern.finditer(text):
             try:
-                if len(stamp) == 10:
-                    return datetime.strptime(stamp, "%Y%m%d%H")
-                if len(stamp) == 8:
-                    return datetime.strptime(stamp, "%Y%m%d")
+                return datetime.strptime(match.group("stamp"), fmt)
             except ValueError:
                 continue
+    for match in SEPARATED_DATE_PATTERN.finditer(text):
+        try:
+            return datetime(
+                int(match.group("year")),
+                int(match.group("month")),
+                int(match.group("day")),
+                int(match.group("hour") or 0),
+                int(match.group("minute") or 0),
+                int(match.group("second") or 0),
+            )
+        except ValueError:
+            continue
+    return None
+
+
+def infer_date_from_path(path: Path) -> datetime:
+    candidates = [path.name, *path.parts[::-1], path.as_posix()]
+    for chunk in candidates:
+        parsed = parse_datetime_from_text(chunk)
+        if parsed is not None:
+            return parsed
     return datetime.fromtimestamp(path.stat().st_mtime)
 
 
-def day_folder_for(base_dir: Path, dt: datetime) -> Path:
+def destination_folder_for(base_dir: Path, dt: datetime, granularity: str = "day") -> Path:
     year = dt.strftime("%Y")
     month = dt.strftime("%Y%m")
+    if granularity == "month":
+        return base_dir / year / month
+    if granularity != "day":
+        raise ValueError("整理粒度无效")
     day = dt.strftime("%Y%m%d")
     return base_dir / year / month / day
+
+
+def day_folder_for(base_dir: Path, dt: datetime) -> Path:
+    return destination_folder_for(base_dir, dt, "day")
+
+
+def device_hint_for(path: Path) -> str:
+    text = path.as_posix().casefold()
+    for label, signatures in DEVICE_SIGNATURES.items():
+        if any(signature.casefold() in text for signature in signatures):
+            return label
+    return "通用"
+
+
+def protection_reasons_for(path: Path, keywords: list[str]) -> list[str]:
+    text = path.as_posix().casefold()
+    return [keyword for keyword in keywords if keyword.casefold() in text]
 
 
 def ffmpeg_tools_available() -> bool:
@@ -299,6 +471,12 @@ def static_frame_score(path: Path) -> float | None:
     return mean_abs_difference(first, last)
 
 
+def age_days_for(modified_at: float, now: datetime | None = None) -> int:
+    current = now or datetime.now()
+    age = current - datetime.fromtimestamp(modified_at)
+    return max(0, age.days)
+
+
 def build_entry(
     base_dir: Path,
     path: Path,
@@ -306,10 +484,22 @@ def build_entry(
     use_size_filter: bool,
     use_static_filter: bool,
     static_threshold: float,
+    options: CleanupOptions | None = None,
 ) -> VideoEntry:
+    if options is None:
+        options = default_cleanup_options(
+            threshold_mb=threshold_bytes / (1024 * 1024),
+            use_size_filter=use_size_filter,
+            use_static_filter=use_static_filter,
+            static_threshold=static_threshold,
+        )
+    threshold_bytes = int(options.threshold_mb * 1024 * 1024)
+    use_size_filter = options.use_size_filter
+    use_static_filter = options.use_static_filter
+    static_threshold = options.static_threshold
     stat = path.stat()
     dt = infer_date_from_path(path)
-    target_dir = day_folder_for(base_dir, dt)
+    target_dir = destination_folder_for(base_dir, dt, options.organize_granularity)
     expected_parent = target_dir.resolve()
     current_parent = path.parent.resolve()
     try:
@@ -317,20 +507,32 @@ def build_entry(
     except OSError:
         needs_organize = True
     candidate_reasons = []
+    protect_reasons = protection_reasons_for(path, options.protected_keywords or [])
     static_score = None
     static_checked = False
-    if use_size_filter and stat.st_size <= threshold_bytes:
+    if options.use_empty_filter and stat.st_size == 0:
+        candidate_reasons.append("empty")
+    if use_size_filter and stat.st_size > 0 and stat.st_size <= threshold_bytes:
         candidate_reasons.append("size")
+    if options.use_retention_filter:
+        cutoff = datetime.now() - timedelta(days=options.retention_days)
+        if datetime.fromtimestamp(stat.st_mtime) < cutoff:
+            candidate_reasons.append("old")
     if use_static_filter:
         static_checked = True
         static_score = static_frame_score(path)
         if static_score is not None and static_score <= static_threshold:
             candidate_reasons.append("static")
+    if protect_reasons:
+        candidate_reasons = []
 
     return VideoEntry(
         path=str(path),
         size_bytes=stat.st_size,
         size_mb=round(stat.st_size / (1024 * 1024), 3),
+        extension=path.suffix.lower(),
+        device_hint=device_hint_for(path),
+        age_days=age_days_for(stat.st_mtime),
         modified_at=datetime.fromtimestamp(stat.st_mtime).strftime("%Y-%m-%d %H:%M:%S"),
         inferred_date=dt.strftime("%Y-%m-%d"),
         year=dt.strftime("%Y"),
@@ -338,6 +540,8 @@ def build_entry(
         day=dt.strftime("%Y%m%d"),
         suggested_folder=str(target_dir),
         needs_organize=needs_organize,
+        is_protected=bool(protect_reasons),
+        protect_reasons=protect_reasons,
         is_candidate=bool(candidate_reasons),
         candidate_reasons=candidate_reasons,
         static_score=round(static_score, 3) if static_score is not None else None,
@@ -365,24 +569,44 @@ def analyze_folder(
     use_size_filter: bool = True,
     use_static_filter: bool = False,
     static_threshold: float = 2.0,
+    use_empty_filter: bool = True,
+    use_retention_filter: bool = False,
+    retention_days: int = 180,
+    protected_keywords: list[str] | None = None,
+    extensions: set[str] | None = None,
+    organize_granularity: str = "day",
 ) -> dict:
-    threshold_bytes = int(threshold_mb * 1024 * 1024)
-    if use_static_filter and not ffmpeg_tools_available():
+    options = default_cleanup_options(
+        threshold_mb=threshold_mb,
+        use_size_filter=use_size_filter,
+        use_empty_filter=use_empty_filter,
+        use_retention_filter=use_retention_filter,
+        retention_days=retention_days,
+        use_static_filter=use_static_filter,
+        static_threshold=static_threshold,
+        protected_keywords=list(DEFAULT_PROTECTED_KEYWORDS) if protected_keywords is None else protected_keywords,
+        extensions=extensions or set(VIDEO_EXTENSIONS),
+        organize_granularity=organize_granularity,
+    )
+    return analyze_folder_with_options(base_dir, options)
+
+
+def analyze_folder_with_options(base_dir: Path, options: CleanupOptions) -> dict:
+    threshold_bytes = int(options.threshold_mb * 1024 * 1024)
+    if options.use_static_filter and not ffmpeg_tools_available():
         raise ValueError("首尾帧检测需要安装 ffmpeg 和 ffprobe")
     entries = analyze_entries(
         base_dir,
-        list(iter_videos(base_dir)),
+        list(iter_videos(base_dir, options.extensions)),
         threshold_bytes,
-        use_size_filter,
-        use_static_filter,
-        static_threshold,
+        options.use_size_filter,
+        options.use_static_filter,
+        options.static_threshold,
+        options=options,
     )
     return format_analysis_result(
         base_dir,
-        threshold_mb,
-        use_size_filter,
-        use_static_filter,
-        static_threshold,
+        options,
         entries,
     )
 
@@ -394,8 +618,16 @@ def analyze_entries(
     use_size_filter: bool,
     use_static_filter: bool,
     static_threshold: float,
+    options: CleanupOptions | None = None,
     progress_callback=None,
 ) -> list[VideoEntry]:
+    if options is None:
+        options = default_cleanup_options(
+            threshold_mb=threshold_bytes / (1024 * 1024),
+            use_size_filter=use_size_filter,
+            use_static_filter=use_static_filter,
+            static_threshold=static_threshold,
+        )
     entries = []
     for index, path in enumerate(video_paths, 1):
         entry = build_entry(
@@ -405,6 +637,7 @@ def analyze_entries(
             use_size_filter,
             use_static_filter,
             static_threshold,
+            options,
         )
         entries.append(entry)
         if progress_callback:
@@ -415,30 +648,49 @@ def analyze_entries(
 
 def format_analysis_result(
     base_dir: Path,
-    threshold_mb: float,
-    use_size_filter: bool,
-    use_static_filter: bool,
-    static_threshold: float,
+    options: CleanupOptions,
     entries: list[VideoEntry],
     total_video_count: int | None = None,
 ) -> dict:
     candidates = [asdict(entry) for entry in entries if entry.is_candidate]
     organize_count = sum(1 for entry in entries if entry.needs_organize)
+    protected_count = sum(1 for entry in entries if entry.is_protected)
     total_size = sum(entry.size_bytes for entry in entries)
     video_count = len(entries) if total_video_count is None else total_video_count
+    reason_counts: dict[str, int] = {}
+    extension_counts: dict[str, int] = {}
+    for entry in entries:
+        extension_counts[entry.extension] = extension_counts.get(entry.extension, 0) + 1
+        for reason in entry.candidate_reasons:
+            reason_counts[reason] = reason_counts.get(reason, 0) + 1
     return {
         "folder": str(base_dir),
-        "threshold_mb": threshold_mb,
-        "use_size_filter": use_size_filter,
-        "use_static_filter": use_static_filter,
-        "static_threshold": static_threshold,
+        "options": {
+            "threshold_mb": options.threshold_mb,
+            "use_size_filter": options.use_size_filter,
+            "use_empty_filter": options.use_empty_filter,
+            "use_retention_filter": options.use_retention_filter,
+            "retention_days": options.retention_days,
+            "use_static_filter": options.use_static_filter,
+            "static_threshold": options.static_threshold,
+            "protected_keywords": options.protected_keywords or [],
+            "extensions": sorted(options.extensions or []),
+            "organize_granularity": options.organize_granularity,
+        },
+        "threshold_mb": options.threshold_mb,
+        "use_size_filter": options.use_size_filter,
+        "use_static_filter": options.use_static_filter,
+        "static_threshold": options.static_threshold,
         "summary": {
             "video_count": video_count,
             "analyzed_count": len(entries),
             "candidate_count": len(candidates),
             "organize_count": organize_count,
+            "protected_count": protected_count,
             "total_size_gb": round(total_size / (1024 * 1024 * 1024), 2),
             "candidate_size_gb": round(sum(item["size_bytes"] for item in candidates) / (1024 * 1024 * 1024), 2),
+            "reason_counts": reason_counts,
+            "extension_counts": dict(sorted(extension_counts.items())),
         },
         "candidates": candidates,
     }
@@ -533,13 +785,21 @@ def run_analyze_job(
     use_size_filter: bool,
     use_static_filter: bool,
     static_threshold: float,
+    options: CleanupOptions | None = None,
 ) -> None:
     try:
-        if use_static_filter and not ffmpeg_tools_available():
+        if options is None:
+            options = default_cleanup_options(
+                threshold_mb=threshold_mb,
+                use_size_filter=use_size_filter,
+                use_static_filter=use_static_filter,
+                static_threshold=static_threshold,
+            )
+        if options.use_static_filter and not ffmpeg_tools_available():
             raise ValueError("首尾帧检测需要安装 ffmpeg 和 ffprobe")
-        threshold_bytes = int(threshold_mb * 1024 * 1024)
+        threshold_bytes = int(options.threshold_mb * 1024 * 1024)
         update_analyze_job(job_id, state="running", phase="collecting", current_path="")
-        video_paths = list(iter_videos(base_dir))
+        video_paths = list(iter_videos(base_dir, options.extensions))
         update_analyze_job(job_id, phase="analyzing", total=len(video_paths), processed=0)
         entries: list[VideoEntry] = []
         stopped = False
@@ -552,9 +812,10 @@ def run_analyze_job(
                 base_dir,
                 path,
                 threshold_bytes,
-                use_size_filter,
-                use_static_filter,
-                static_threshold,
+                options.use_size_filter,
+                options.use_static_filter,
+                options.static_threshold,
+                options,
             )
             entries.append(entry)
             with ANALYZE_JOBS_LOCK:
@@ -570,10 +831,7 @@ def run_analyze_job(
         entries.sort(key=lambda item: item.path)
         result = format_analysis_result(
             base_dir,
-            threshold_mb,
-            use_size_filter,
-            use_static_filter,
-            static_threshold,
+            options,
             entries,
             total_video_count=len(video_paths),
         )
@@ -607,7 +865,15 @@ def start_analyze_job(
     use_size_filter: bool,
     use_static_filter: bool,
     static_threshold: float,
+    options: CleanupOptions | None = None,
 ) -> dict:
+    if options is None:
+        options = default_cleanup_options(
+            threshold_mb=threshold_mb,
+            use_size_filter=use_size_filter,
+            use_static_filter=use_static_filter,
+            static_threshold=static_threshold,
+        )
     job_id = uuid.uuid4().hex
     job = {
         "job_id": job_id,
@@ -627,32 +893,55 @@ def start_analyze_job(
         ANALYZE_JOBS[job_id] = job
     thread = threading.Thread(
         target=run_analyze_job,
-        args=(job_id, base_dir, threshold_mb, use_size_filter, use_static_filter, static_threshold),
+        args=(job_id, base_dir, threshold_mb, use_size_filter, use_static_filter, static_threshold, options),
         daemon=True,
     )
     thread.start()
     return job_payload(job)
 
 
-def parse_analyze_payload(payload: dict) -> tuple[Path, float, bool, bool, float]:
+def parse_analyze_payload(payload: dict) -> tuple[Path, CleanupOptions]:
     base_dir = sanitize_folder(payload.get("folder", ""))
     threshold_mb = float(payload.get("threshold_mb", 1.0))
     use_size_filter = bool(payload.get("use_size_filter", True))
+    use_empty_filter = bool(payload.get("use_empty_filter", True))
+    use_retention_filter = bool(payload.get("use_retention_filter", False))
+    retention_days = int(payload.get("retention_days", 180))
     use_static_filter = bool(payload.get("use_static_filter", False))
     static_threshold = float(payload.get("static_threshold", 2.0))
+    protected_keywords = normalize_keywords(payload.get("protected_keywords"))
+    extensions = normalize_extensions(payload.get("extensions"))
+    organize_granularity = str(payload.get("organize_granularity", "day"))
     if threshold_mb <= 0:
         raise ValueError("阈值必须大于 0")
+    if retention_days <= 0:
+        raise ValueError("保留天数必须大于 0")
     if static_threshold < 0:
         raise ValueError("静态差异阈值不能小于 0")
-    return base_dir, threshold_mb, use_size_filter, use_static_filter, static_threshold
+    if organize_granularity not in ORGANIZE_GRANULARITIES:
+        raise ValueError("整理粒度无效")
+    return base_dir, CleanupOptions(
+        threshold_mb=threshold_mb,
+        use_size_filter=use_size_filter,
+        use_empty_filter=use_empty_filter,
+        use_retention_filter=use_retention_filter,
+        retention_days=retention_days,
+        use_static_filter=use_static_filter,
+        static_threshold=static_threshold,
+        protected_keywords=protected_keywords,
+        extensions=extensions,
+        organize_granularity=organize_granularity,
+    )
 
 
-def organize_folder(base_dir: Path) -> dict:
+def organize_folder(base_dir: Path, granularity: str = "day", extensions: set[str] | None = None) -> dict:
+    if granularity not in ORGANIZE_GRANULARITIES:
+        raise ValueError("整理粒度无效")
     moved = []
     skipped = []
-    for video_path in list(iter_videos(base_dir)):
+    for video_path in list(iter_videos(base_dir, extensions)):
         dt = infer_date_from_path(video_path)
-        target_dir = day_folder_for(base_dir, dt)
+        target_dir = destination_folder_for(base_dir, dt, granularity)
         if video_path.parent.resolve() == target_dir.resolve():
             skipped.append(str(video_path))
             continue
@@ -710,29 +999,24 @@ class AppHandler(BaseHTTPRequestHandler):
 
         try:
             if parsed.path == "/api/analyze":
-                base_dir, threshold_mb, use_size_filter, use_static_filter, static_threshold = parse_analyze_payload(payload)
+                base_dir, options = parse_analyze_payload(payload)
                 json_response(
                     self,
-                    analyze_folder(
-                        base_dir,
-                        threshold_mb,
-                        use_size_filter=use_size_filter,
-                        use_static_filter=use_static_filter,
-                        static_threshold=static_threshold,
-                    ),
+                    analyze_folder_with_options(base_dir, options),
                 )
                 return
 
             if parsed.path == "/api/analyze/start":
-                base_dir, threshold_mb, use_size_filter, use_static_filter, static_threshold = parse_analyze_payload(payload)
+                base_dir, options = parse_analyze_payload(payload)
                 json_response(
                     self,
                     start_analyze_job(
                         base_dir,
-                        threshold_mb,
-                        use_size_filter=use_size_filter,
-                        use_static_filter=use_static_filter,
-                        static_threshold=static_threshold,
+                        options.threshold_mb,
+                        use_size_filter=options.use_size_filter,
+                        use_static_filter=options.use_static_filter,
+                        static_threshold=options.static_threshold,
+                        options=options,
                     ),
                     HTTPStatus.ACCEPTED,
                 )
@@ -765,7 +1049,9 @@ class AppHandler(BaseHTTPRequestHandler):
 
             if parsed.path == "/api/organize":
                 base_dir = sanitize_folder(payload.get("folder", ""))
-                json_response(self, organize_folder(base_dir))
+                granularity = str(payload.get("organize_granularity", "day"))
+                extensions = normalize_extensions(payload.get("extensions"))
+                json_response(self, organize_folder(base_dir, granularity=granularity, extensions=extensions))
                 return
 
             if parsed.path == "/api/delete":

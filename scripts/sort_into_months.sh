@@ -2,8 +2,9 @@
 set -eu
 
 : "${SOURCE_BASE:?SOURCE_BASE is required}"
+DRY_RUN="${DRY_RUN:-0}"
 
-echo "BEGIN_SORT	$SOURCE_BASE"
+echo "BEGIN_SORT	$SOURCE_BASE	dry_run=$DRY_RUN"
 
 for year_dir in "$SOURCE_BASE"/20[0-9][0-9]; do
   [ -d "$year_dir" ] || continue
@@ -17,7 +18,14 @@ for year_dir in "$SOURCE_BASE"/20[0-9][0-9]; do
     dst="$month_dir/$name"
 
     if [ -e "$dst" ]; then
-      printf "skip_exists\t%s\t%s\n" "$hour_dir" "$dst"
+      if [ "$DRY_RUN" != "1" ]; then
+        printf "skip_exists\t%s\t%s\n" "$hour_dir" "$dst"
+      fi
+      continue
+    fi
+
+    if [ "$DRY_RUN" = "1" ]; then
+      printf "dry_run\t%s\t%s\n" "$hour_dir" "$dst"
       continue
     fi
 

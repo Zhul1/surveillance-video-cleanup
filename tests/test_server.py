@@ -2,6 +2,7 @@ import tempfile
 import unittest
 import shutil
 import errno
+import os
 import subprocess
 import time
 from unittest.mock import patch
@@ -15,6 +16,7 @@ from app.server import (
     create_server,
     delete_selected,
     get_analyze_job,
+    infer_date_from_path,
     mean_abs_difference,
     open_folder,
     organize_folder,
@@ -44,6 +46,63 @@ class ServerWorkflowTest(unittest.TestCase):
             result = analyze_folder(base, threshold_mb=1.0, use_size_filter=False)
 
             self.assertEqual(result["summary"]["candidate_count"], 0)
+
+    def test_common_surveillance_formats_are_analyzed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            for name in [
+                "ch01_20240401120000.dav",
+                "reolink_2024-04-01_12-10-00.asf",
+                "tapo_2024_04_01_121500.ts",
+            ]:
+                (base / name).write_bytes(b"x")
+
+            result = analyze_folder(base, threshold_mb=1.0)
+
+            self.assertEqual(result["summary"]["video_count"], 3)
+            self.assertEqual(result["summary"]["extension_counts"][".dav"], 1)
+            self.assertEqual(result["summary"]["extension_counts"][".asf"], 1)
+            self.assertEqual(result["summary"]["extension_counts"][".ts"], 1)
+
+    def test_infers_common_camera_date_patterns(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            video = base / "FrontDoor_2024-04-02_13-14-15.mp4"
+            video.write_bytes(b"x")
+
+            self.assertEqual(infer_date_from_path(video).strftime("%Y-%m-%d %H:%M:%S"), "2024-04-02 13:14:15")
+
+    def test_protected_keywords_prevent_candidate(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            protected = base / "alarm_2024010100.mp4"
+            normal = base / "normal_2024010100.mp4"
+            protected.write_bytes(b"x")
+            normal.write_bytes(b"x")
+
+            result = analyze_folder(base, threshold_mb=1.0, protected_keywords=["alarm"])
+
+            self.assertEqual(result["summary"]["candidate_count"], 1)
+            self.assertEqual(result["summary"]["protected_count"], 1)
+            self.assertEqual(Path(result["candidates"][0]["path"]).name, "normal_2024010100.mp4")
+
+    def test_retention_filter_marks_old_recordings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            old_video = base / "old_2020010100.mp4"
+            old_video.write_bytes(b"x" * 1024 * 1024 * 2)
+            old_time = time.time() - 400 * 24 * 60 * 60
+            os.utime(old_video, (old_time, old_time))
+
+            result = analyze_folder(
+                base,
+                threshold_mb=1.0,
+                use_retention_filter=True,
+                retention_days=180,
+            )
+
+            self.assertEqual(result["summary"]["candidate_count"], 1)
+            self.assertIn("old", result["candidates"][0]["candidate_reasons"])
 
     def test_async_analyze_job_reports_result(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -165,6 +224,18 @@ class ServerWorkflowTest(unittest.TestCase):
             result = organize_folder(base)
 
             expected = base / "2024" / "202401" / "20240101" / video.name
+            self.assertEqual(result["moved_count"], 1)
+            self.assertTrue(expected.exists())
+
+    def test_organize_can_group_by_month(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            video = base / "2024010100_clip.dav"
+            video.write_bytes(b"video")
+
+            result = organize_folder(base, granularity="month")
+
+            expected = base / "2024" / "202401" / video.name
             self.assertEqual(result["moved_count"], 1)
             self.assertTrue(expected.exists())
 

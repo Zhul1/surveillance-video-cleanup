@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-: "${ROOT_DIR:?ROOT_DIR is required}"
 : "${SCANNER:?SCANNER is required}"
 : "${VIDEO_LIST:?VIDEO_LIST is required}"
 : "${OUTPUT_DIR:?OUTPUT_DIR is required}"
-: "${MOUNT_ROOT:?MOUNT_ROOT is required}"
 : "${REMOTE_PREFIX:?REMOTE_PREFIX is required}"
 : "${LOCAL_PREFIX:?LOCAL_PREFIX is required}"
 : "${TRASH_PREFIX:?TRASH_PREFIX is required}"
+: "${MONTHS:?MONTHS is required, for example: 202401 202402}"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 PYTHONPATH_EXTRA="${PYTHONPATH_EXTRA:-}"
-MONTHS="${MONTHS:-202303 202304 202305 202306 202307 202308 202309 202310 202311 202312}"
 WORKERS="${WORKERS:-4}"
 SAMPLES="${SAMPLES:-6}"
 USE_VISION_CONFIRM="${USE_VISION_CONFIRM:-1}"
 PROGRESS_LOG="${PROGRESS_LOG:-$OUTPUT_DIR/full-cleanup-progress.tsv}"
-MONTH_ROOT_CHECK="${MONTH_ROOT_CHECK:-$MOUNT_ROOT/监控视频/卧室/2023}"
+MOUNT_CHECK_DIR="${MOUNT_CHECK_DIR:-$LOCAL_PREFIX}"
 VISION_DETECTOR="${VISION_DETECTOR:-}"
+MOVE_DRY_RUN="${MOVE_DRY_RUN:-1}"
+SOURCE_ROOT="${SOURCE_ROOT:-}"
 
 export PYTHONPATH="${PYTHONPATH_EXTRA}${PYTHONPATH_EXTRA:+:}${PYTHONPATH:-}"
 
-if [ ! -d "$MONTH_ROOT_CHECK" ]; then
-  echo "ERROR: expected mounted directory missing at $MONTH_ROOT_CHECK" >&2
+if [ ! -d "$MOUNT_CHECK_DIR" ]; then
+  echo "ERROR: expected mounted directory missing at $MOUNT_CHECK_DIR" >&2
   exit 2
 fi
 
@@ -71,19 +71,32 @@ PY
 
   echo "[$(date '+%F %T')] move_start $month empty=$empty"
   move_log="$OUTPUT_DIR/move-full-$month.log"
-  "$PYTHON_BIN" "$SCANNER" \
+  move_args=(
+    "$SCANNER"
     --out "$out" \
     --move-empty \
     --move-via local \
     --remote-prefix "$REMOTE_PREFIX" \
     --local-prefix "$LOCAL_PREFIX" \
     --trash-prefix "$TRASH_PREFIX" \
-    > "$move_log"
+  )
+  if [ "$MOVE_DRY_RUN" = "1" ]; then
+    move_args+=(--dry-run)
+  fi
+  if [ -n "$SOURCE_ROOT" ]; then
+    move_args+=(--source-root "$SOURCE_ROOT")
+  fi
+
+  "$PYTHON_BIN" "${move_args[@]}" > "$move_log"
 
   moved="$(awk -F= '/^move_count=/{print $2}' "$move_log" | awk '{print $1}')"
   moved="${moved:-0}"
-  printf "%s\t%s\tmoved\t%s\t%s\t%s\t%s\n" "$(date '+%F %T')" "$month" "$keep" "$empty" "$error" "$moved" >> "$PROGRESS_LOG"
-  echo "[$(date '+%F %T')] month_done $month keep=$keep empty=$empty error=$error moved=$moved"
+  phase="moved"
+  if [ "$MOVE_DRY_RUN" = "1" ]; then
+    phase="dry_run"
+  fi
+  printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\n" "$(date '+%F %T')" "$month" "$phase" "$keep" "$empty" "$error" "$moved" >> "$PROGRESS_LOG"
+  echo "[$(date '+%F %T')] month_done $month keep=$keep empty=$empty error=$error $phase=$moved"
 done
 
 echo "[$(date '+%F %T')] cleanup_done"

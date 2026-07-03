@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+import getpass
 import hashlib
 import os
 import subprocess
@@ -11,6 +12,13 @@ from pathlib import Path
 
 cv2 = None
 np = None
+
+
+def default_ssh_user():
+    try:
+        return getpass.getuser() or "admin"
+    except Exception:
+        return "admin"
 
 
 @dataclass
@@ -315,7 +323,19 @@ def append_csv(path, results):
             ])
 
 
-def move_candidates_to_trash(csv_path, dry_run, max_count, via, remote_prefix, local_prefix, source_root, trash_prefix):
+def move_candidates_to_trash(
+    csv_path,
+    dry_run,
+    max_count,
+    via,
+    remote_prefix,
+    local_prefix,
+    source_root,
+    trash_prefix,
+    ssh_host=None,
+    ssh_user=None,
+    ssh_port=22,
+):
     moved = []
     with open(csv_path, "r", encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh)
@@ -338,9 +358,12 @@ def move_candidates_to_trash(csv_path, dry_run, max_count, via, remote_prefix, l
                     os.rename(local_src, local_dst)
                     moved.append((src, dst, "moved"))
             else:
+                if not ssh_host:
+                    raise ValueError("ssh_host is required when via='ssh'")
+                ssh_target = f"{ssh_user or default_ssh_user()}@{ssh_host}"
                 parent = os.path.dirname(dst)
                 subprocess.run(
-                    ["ssh", "-p", "22", "admin@192.168.0.103", f"mkdir -p {sh_quote(parent)} && mv -n {sh_quote(src)} {sh_quote(dst)}"],
+                    ["ssh", "-p", str(ssh_port), ssh_target, f"mkdir -p {sh_quote(parent)} && mv -n {sh_quote(src)} {sh_quote(dst)}"],
                     check=True,
                 )
                 moved.append((src, dst, "moved"))
@@ -370,6 +393,9 @@ def main():
     parser.add_argument("--vision-detector", default="")
     parser.add_argument("--move-empty", action="store_true")
     parser.add_argument("--move-via", choices=["local", "ssh"], default="local")
+    parser.add_argument("--ssh-host")
+    parser.add_argument("--ssh-user", default=default_ssh_user())
+    parser.add_argument("--ssh-port", type=int, default=22)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--move-max", type=int)
     parser.add_argument("--resume", action="store_true")
@@ -384,6 +410,8 @@ def main():
         source_root = os.path.commonpath([args.trash_prefix.replace("/#recycle", ""), args.remote_prefix]).rstrip("/")
 
     if args.move_empty:
+        if args.move_via == "ssh" and not args.dry_run and not args.ssh_host:
+            parser.error("--ssh-host is required when using --move-via ssh")
         moved = move_candidates_to_trash(
             args.out,
             dry_run=args.dry_run,
@@ -393,6 +421,9 @@ def main():
             local_prefix=args.local_prefix,
             source_root=source_root,
             trash_prefix=args.trash_prefix,
+            ssh_host=args.ssh_host,
+            ssh_user=args.ssh_user,
+            ssh_port=args.ssh_port,
         )
         for src, dst, status in moved:
             print(f"{status}\t{src}\t{dst}")
